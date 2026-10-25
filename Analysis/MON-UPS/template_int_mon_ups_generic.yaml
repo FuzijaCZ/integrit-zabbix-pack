@@ -1,0 +1,343 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 68b85b414b384600991e4893590421e3
+      name: Templates/Integrit/MON-UPS
+  templates:
+    - uuid: 205fab177b2d4473b96430884c5ef4e9
+      template: 'INT MON-UPS Generic UPS-MIB'
+      name: 'INT MON-UPS Generic UPS-MIB'
+      description: |
+        Integrit MON-UPS template for any UPS management card that implements the standard UPS-MIB (RFC 1628,
+        1.3.6.1.2.1.33): Eaton Network-M2/M3, Legrand, Socomec NetVision, Riello NetMan, CyberPower RMCARD, Vertiv and others.
+        No official 7.0 template exists. Single-phase values (line 1); 3-phase UPS report line 1 here.
+        Battery age needs {$INT.UPS.BATTERY.INSTALLED} (YYYYMMDD) on the host, because UPS-MIB has no battery date.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-UPS
+      items:
+        - uuid: d36edfee88d04546bf76e3039494d1ab
+          name: 'Alarms present'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.2.1.33.1.6.1.0]'
+          key: 'ups.alarms.present[upsAlarmsPresent.0]'
+          description: 'MIB: UPS-MIB. Number of active alarm conditions (replace battery, overload, fan failure, ...).'
+          tags:
+            - tag: component
+              value: system
+          triggers:
+            - uuid: 7e6cb94ebd9c468a8735cbf6d7931b3a
+              expression: 'min(/INT MON-UPS Generic UPS-MIB/ups.alarms.present[upsAlarmsPresent.0],5m)>0'
+              name: 'INT: UPS reports active alarms'
+              opdata: 'Alarms: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Check the UPS web interface for the alarm text (e.g. battery replacement, fan, overload). On-battery and low battery have their own triggers.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 2611262e6d1c43cfb6ed8e12f2bc981f
+          name: 'Battery charge remaining'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.2.1.33.1.2.4.0]'
+          key: 'ups.battery.charge[upsEstimatedChargeRemaining.0]'
+          units: '%'
+          description: 'MIB: UPS-MIB.'
+          tags:
+            - tag: component
+              value: battery
+        - uuid: 96f245c356d848e8ab4c9cba12c6ed3a
+          name: 'Battery runtime remaining'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.2.1.33.1.2.3.0]'
+          key: 'ups.battery.runtime[upsEstimatedMinutesRemaining.0]'
+          units: s
+          description: 'MIB: UPS-MIB. Estimated runtime at the current load (minutes converted to seconds).'
+          preprocessing:
+            - type: MULTIPLIER
+              parameters:
+                - '60'
+          tags:
+            - tag: component
+              value: battery
+        - uuid: 877023f1a63e433b882164c8c8480cdc
+          name: 'Battery status'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.2.1.33.1.2.1.0]'
+          key: 'ups.battery.status[upsBatteryStatus.0]'
+          valuemap:
+            name: 'UPS-MIB battery status'
+          description: 'MIB: UPS-MIB.'
+          tags:
+            - tag: component
+              value: battery
+        - uuid: bd1b2cf242704c7399ff4881a85c5647
+          name: 'Battery temperature'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.2.1.33.1.2.7.0]'
+          key: 'ups.battery.temperature[upsBatteryTemperature.0]'
+          units: °C
+          description: 'MIB: UPS-MIB. 0 on cards without a battery sensor.'
+          tags:
+            - tag: component
+              value: battery
+          triggers:
+            - uuid: 1d24db40c2f14a73bb0cddd98848aaa1
+              expression: 'min(/INT MON-UPS Generic UPS-MIB/ups.battery.temperature[upsBatteryTemperature.0],15m)>{$INT.UPS.BATTERY.TEMP.MAX}'
+              name: 'INT: UPS battery temperature above {$INT.UPS.BATTERY.TEMP.MAX}°C'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'High temperature shortens battery life sharply. Check room cooling.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 8fcc906d39a745df958b159f28ef655d
+          name: 'Input voltage'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.2.1.33.1.3.3.1.3.1]'
+          key: 'ups.input.voltage[upsInputVoltage.1]'
+          units: V
+          description: 'MIB: UPS-MIB. Input line 1.'
+          tags:
+            - tag: component
+              value: input
+        - uuid: 1306eb9843724099a4d254a03a7b729b
+          name: 'Model'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.2.1.33.1.1.2.0]'
+          key: 'ups.model[upsIdentModel.0]'
+          delay: 1h
+          value_type: CHAR
+          trends: '0'
+          inventory_link: MODEL
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: component
+              value: system
+        - uuid: 5c4af106d10040a9af7faeff994f3d5a
+          name: 'Output load'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.2.1.33.1.4.4.1.5.1]'
+          key: 'ups.output.load[upsOutputPercentLoad.1]'
+          units: '%'
+          description: 'MIB: UPS-MIB. Output line 1, percent of rated capacity.'
+          tags:
+            - tag: component
+              value: output
+        - uuid: 1093190756bf4a78ba0067be0d65688d
+          name: 'Output source'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.2.1.33.1.4.1.0]'
+          key: 'ups.output.source[upsOutputSource.0]'
+          valuemap:
+            name: 'UPS-MIB output source'
+          description: 'MIB: UPS-MIB. 5 = battery.'
+          tags:
+            - tag: component
+              value: output
+          triggers:
+            - uuid: 3fdfdedc438b4aac9a3abe489a74e03b
+              expression: 'last(/INT MON-UPS Generic UPS-MIB/ups.output.source[upsOutputSource.0])=2'
+              name: 'INT: UPS output is off'
+              priority: HIGH
+              description: 'UPS reports no output (none). Protected equipment has no power unless it is fed elsewhere.'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: eee040e293bb4c968a8357718a5ebab5
+              expression: 'last(/INT MON-UPS Generic UPS-MIB/ups.output.source[upsOutputSource.0])=4'
+              name: 'INT: UPS is on bypass'
+              priority: AVERAGE
+              description: 'Load is fed directly from mains without battery protection.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 9a4f11eb9a4e4e9289710884d1504f38
+          name: 'Self-test result'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.2.1.33.1.7.3.0]'
+          key: 'ups.test.result[upsTestResultsSummary.0]'
+          delay: 1h
+          valuemap:
+            name: 'UPS-MIB test result'
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: component
+              value: battery
+          triggers:
+            - uuid: 6625b12425854877a28f457e5bae7c62
+              expression: 'last(/INT MON-UPS Generic UPS-MIB/ups.test.result[upsTestResultsSummary.0])=3'
+              name: 'INT: UPS self-test failed'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: HIGH
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 33efcd779917493cad28f16ce3ed8e80
+          name: 'Seconds on battery'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.2.1.33.1.2.2.0]'
+          key: 'ups.battery.onbattery[upsSecondsOnBattery.0]'
+          units: s
+          description: 'MIB: UPS-MIB. 0 when on mains.'
+          tags:
+            - tag: component
+              value: battery
+        - uuid: 4c589bf93ad2487aa2841f62e13d24f5
+          name: 'SNMP agent availability'
+          type: INTERNAL
+          key: 'zabbix[host,snmp,available]'
+          tags:
+            - tag: component
+              value: system
+          triggers:
+            - uuid: 9f7d09e2df7d49a4b596bf4051816700
+              expression: 'max(/INT MON-UPS Generic UPS-MIB/zabbix[host,snmp,available],{$SNMP.TIMEOUT})=0'
+              name: 'INT: UPS management card is unreachable'
+              priority: AVERAGE
+              description: 'No SNMP answer for {$SNMP.TIMEOUT}. Card hung, network or site problem.'
+              tags:
+                - tag: scope
+                  value: availability
+      tags:
+        - tag: service
+          value: MON-UPS
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.UPS.BATTERY.INSTALLED}'
+          value: '0'
+          description: 'Battery install date YYYYMMDD (e.g. 20240315). 0 = unknown, no age trigger.'
+        - macro: '{$INT.UPS.BATTERY.MAX.AGE.YEARS}'
+          value: '4'
+        - macro: '{$INT.UPS.BATTERY.TEMP.MAX}'
+          value: '45'
+        - macro: '{$INT.UPS.LOAD.HIGH}'
+          value: '90'
+        - macro: '{$INT.UPS.LOAD.SUSTAINED.MAX}'
+          value: '80'
+        - macro: '{$INT.UPS.LOAD.SUSTAINED.PERIOD}'
+          value: 1h
+        - macro: '{$INT.UPS.ONBATT.DELAY}'
+          value: 1m
+        - macro: '{$INT.UPS.RUNTIME.MIN}'
+          value: 10m
+          description: 'Required runtime for this UPS (customer requirement). Set per host.'
+        - macro: '{$SNMP.TIMEOUT}'
+          value: 5m
+      valuemaps:
+        - uuid: 6b4d82df34c04c79af6ca497c6648ea9
+          name: 'UPS-MIB battery status'
+          mappings:
+            - value: '1'
+              newvalue: unknown
+            - value: '2'
+              newvalue: normal
+            - value: '3'
+              newvalue: low
+            - value: '4'
+              newvalue: depleted
+        - uuid: 3359a87abc424a38a734d63c2b7c6161
+          name: 'UPS-MIB output source'
+          mappings:
+            - value: '1'
+              newvalue: other
+            - value: '2'
+              newvalue: none
+            - value: '3'
+              newvalue: normal
+            - value: '4'
+              newvalue: bypass
+            - value: '5'
+              newvalue: battery
+            - value: '6'
+              newvalue: booster
+            - value: '7'
+              newvalue: reducer
+        - uuid: eee909f3a7cc459d86baf85e88cf981a
+          name: 'UPS-MIB test result'
+          mappings:
+            - value: '1'
+              newvalue: 'Passed'
+            - value: '2'
+              newvalue: 'Passed with warning'
+            - value: '3'
+              newvalue: 'Failed'
+            - value: '4'
+              newvalue: 'Aborted'
+            - value: '5'
+              newvalue: 'In progress'
+            - value: '6'
+              newvalue: 'No test initiated'
+  triggers:
+    - uuid: ee461c8df318499db5d62905f2d78558
+      expression: 'last(/INT MON-UPS Generic UPS-MIB/ups.battery.status[upsBatteryStatus.0])>=3 and last(/INT MON-UPS Generic UPS-MIB/ups.output.source[upsOutputSource.0])=5'
+      name: 'INT: UPS battery is low while on battery: shutdown imminent'
+      priority: DISASTER
+      tags:
+        - tag: scope
+          value: availability
+    - uuid: 741d0951c9d140da9b65e93a780cda02
+      expression: 'last(/INT MON-UPS Generic UPS-MIB/ups.output.source[upsOutputSource.0])=5 and last(/INT MON-UPS Generic UPS-MIB/ups.battery.runtime[upsEstimatedMinutesRemaining.0])<{$INT.UPS.RUNTIME.MIN}'
+      name: 'INT: UPS on battery with runtime below {$INT.UPS.RUNTIME.MIN}'
+      opdata: 'Runtime: {ITEM.LASTVALUE2}'
+      priority: DISASTER
+      dependencies:
+        - name: 'INT: UPS battery is low while on battery: shutdown imminent'
+          expression: 'last(/INT MON-UPS Generic UPS-MIB/ups.battery.status[upsBatteryStatus.0])>=3 and last(/INT MON-UPS Generic UPS-MIB/ups.output.source[upsOutputSource.0])=5'
+      tags:
+        - tag: scope
+          value: availability
+    - uuid: 958fda34c3bb458280803e6d38e80685
+      expression: 'min(/INT MON-UPS Generic UPS-MIB/ups.output.source[upsOutputSource.0],{$INT.UPS.ONBATT.DELAY})=5 and max(/INT MON-UPS Generic UPS-MIB/ups.output.source[upsOutputSource.0],{$INT.UPS.ONBATT.DELAY})=5'
+      name: 'INT: UPS is on battery for more than {$INT.UPS.ONBATT.DELAY}'
+      priority: HIGH
+      dependencies:
+        - name: 'INT: UPS on battery with runtime below {$INT.UPS.RUNTIME.MIN}'
+          expression: 'last(/INT MON-UPS Generic UPS-MIB/ups.output.source[upsOutputSource.0])=5 and last(/INT MON-UPS Generic UPS-MIB/ups.battery.runtime[upsEstimatedMinutesRemaining.0])<{$INT.UPS.RUNTIME.MIN}'
+      tags:
+        - tag: scope
+          value: availability
+    - uuid: 1b20435172df436d9989c17811f8223c
+      expression: 'max(/INT MON-UPS Generic UPS-MIB/ups.battery.runtime[upsEstimatedMinutesRemaining.0],15m)<{$INT.UPS.RUNTIME.MIN} and last(/INT MON-UPS Generic UPS-MIB/ups.output.source[upsOutputSource.0])<>5'
+      name: 'INT: UPS runtime at current load is below {$INT.UPS.RUNTIME.MIN}'
+      opdata: 'Runtime: {ITEM.LASTVALUE1}'
+      priority: HIGH
+      tags:
+        - tag: scope
+          value: capacity
+    - uuid: 45191c059d5f412bbd8de9b0c2d58042
+      expression: 'min(/INT MON-UPS Generic UPS-MIB/ups.output.load[upsOutputPercentLoad.1],15m)>{$INT.UPS.LOAD.HIGH}'
+      name: 'INT: UPS output load above {$INT.UPS.LOAD.HIGH}%'
+      opdata: 'Load: {ITEM.LASTVALUE1}'
+      priority: HIGH
+      tags:
+        - tag: scope
+          value: capacity
+    - uuid: 211601c116ac4f1a92702ee8a1519ac4
+      expression: 'min(/INT MON-UPS Generic UPS-MIB/ups.output.load[upsOutputPercentLoad.1],{$INT.UPS.LOAD.SUSTAINED.PERIOD})>{$INT.UPS.LOAD.SUSTAINED.MAX}'
+      name: 'INT: UPS load above {$INT.UPS.LOAD.SUSTAINED.MAX}% for {$INT.UPS.LOAD.SUSTAINED.PERIOD}'
+      opdata: 'Load: {ITEM.LASTVALUE1}'
+      priority: WARNING
+      dependencies:
+        - name: 'INT: UPS output load above {$INT.UPS.LOAD.HIGH}%'
+          expression: 'min(/INT MON-UPS Generic UPS-MIB/ups.output.load[upsOutputPercentLoad.1],15m)>{$INT.UPS.LOAD.HIGH}'
+      tags:
+        - tag: scope
+          value: capacity
+    - uuid: 5a17e00cb37843af9afd756d151a7779
+      expression: '{$INT.UPS.BATTERY.INSTALLED}>0 and date()>{$INT.UPS.BATTERY.INSTALLED}+{$INT.UPS.BATTERY.MAX.AGE.YEARS}*10000 and count(/INT MON-UPS Generic UPS-MIB/ups.battery.status[upsBatteryStatus.0],1d)>0'
+      name: 'INT: UPS battery is older than {$INT.UPS.BATTERY.MAX.AGE.YEARS} years'
+      opdata: 'Installed: {$INT.UPS.BATTERY.INSTALLED}'
+      priority: WARNING
+      description: 'Based on {$INT.UPS.BATTERY.INSTALLED} (YYYYMMDD). Update the macro after a battery replacement.'
+      tags:
+        - tag: scope
+          value: capacity
