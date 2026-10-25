@@ -1,10 +1,10 @@
 zabbix_export:
   version: '7.0'
   template_groups:
-    - uuid: 57cc7cea886e4eeea5fbbedbdb6c3d28
+    - uuid: b6227329c19445cd944924c363dd68e4
       name: Templates/Integrit/MON-ROLE
   templates:
-    - uuid: a18e69bf723d4957916507744250f7e2
+    - uuid: 1215fb251085482caf31c3e0984d3436
       template: 'INT MON-ROLE File server'
       name: 'INT MON-ROLE File server'
       description: |
@@ -16,7 +16,7 @@ zabbix_export:
       groups:
         - name: Templates/Integrit/MON-ROLE
       items:
-        - uuid: c92d51ded563497c833a949fa2ae75ed
+        - uuid: 4012669053a249eea14413cb51d9c4c2
           name: 'File server: shares raw'
           type: ZABBIX_ACTIVE
           key: 'int.role.shares'
@@ -28,7 +28,7 @@ zabbix_export:
           tags:
             - tag: component
               value: raw
-        - uuid: a4f9066de0384dca9714c33301812538
+        - uuid: b19041bd47a44149a9368de7236d3e7d
           name: 'File server: shadow copies raw'
           type: ZABBIX_ACTIVE
           key: 'int.role.vss'
@@ -40,7 +40,7 @@ zabbix_export:
           tags:
             - tag: component
               value: raw
-        - uuid: 0db3ae7e80174723bca35e02c94a90f4
+        - uuid: 6e958604f8da48caafd9ba6670416242
           name: 'File server: FSRM quotas raw'
           type: ZABBIX_ACTIVE
           key: 'int.role.fsrm'
@@ -52,7 +52,7 @@ zabbix_export:
           tags:
             - tag: component
               value: raw
-        - uuid: 898b915522164d89a07101fa47e67938
+        - uuid: 045559d733e84073933f5badcdd7973a
           name: 'File server: DFS-R backlog raw'
           type: ZABBIX_ACTIVE
           key: 'int.role.dfsr'
@@ -65,7 +65,7 @@ zabbix_export:
             - tag: component
               value: raw
       discovery_rules:
-        - uuid: b1b23e23ba5948f9be6d212c369c4561
+        - uuid: 70686370baf74d73a380d88444821488
           name: 'Shares discovery'
           type: DEPENDENT
           key: int.role.shares.discovery
@@ -79,7 +79,7 @@ zabbix_export:
           lifetime: 7d
           enabled_lifetime_type: DISABLE_NEVER
           item_prototypes:
-            - uuid: 6c69ca639ca34ee2a61dfe0c9c14e83d
+            - uuid: 627246f5a1e84c25a18296897e08d939
               name: 'Share {#SHARE}: online'
               type: DEPENDENT
               key: 'int.role.share.ok[{#SHARE}]'
@@ -91,14 +91,14 @@ zabbix_export:
                     - '$[?(@.share==''{#SHARE}'')].ok.first()'
                   error_handler: DISCARD_VALUE
               valuemap:
-                name: 'INT ROLE yes/no'
+                name: 'INT ROLE FILE yes/no'
               master_item:
                 key: 'int.role.shares'
               tags:
                 - tag: component
                   value: share
           trigger_prototypes:
-            - uuid: 6e34a21310984a3cae591dbed8a0a568
+            - uuid: 80f0590de8024166ac906d03a07dc6b4
               expression: 'max(/INT MON-ROLE File server/int.role.share.ok[{#SHARE}],#2)=0'
               name: 'INT: Share {#SHARE} on {HOST.NAME} is offline'
               priority: HIGH
@@ -106,7 +106,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: availability
-            - uuid: 9d92b1990b6543f2843f009b862e06e2
+            - uuid: 0d82fa16963d4ccc87b1a69b3c23fed9
               expression: 'nodata(/INT MON-ROLE File server/int.role.share.ok[{#SHARE}],{$INT.ROLE.SHARE.GONE})=1'
               name: 'INT: Share {#SHARE} on {HOST.NAME} no longer exists'
               priority: AVERAGE
@@ -121,7 +121,7 @@ zabbix_export:
               path: $.share
             - lld_macro: '{#PATH}'
               path: $.path
-        - uuid: 4ec1c35a2d4c4a5da02eb8b2cc3d2a40
+        - uuid: f190c189a53442f890993a404a85765a
           name: 'Shadow copy volumes discovery'
           type: DEPENDENT
           key: int.role.vss.discovery
@@ -134,7 +134,7 @@ zabbix_export:
           lifetime: 7d
           enabled_lifetime_type: DISABLE_NEVER
           item_prototypes:
-            - uuid: 25cc502aa0f3433b86a2bdb63277e048
+            - uuid: 87882aa5d97649a0b28b202b8df1b3d8
               name: 'Volume {#VOLUME}: newest shadow copy age'
               type: DEPENDENT
               key: 'int.role.vss.age[{#VOLUME}]'
@@ -151,7 +151,7 @@ zabbix_export:
               tags:
                 - tag: component
                   value: vss
-            - uuid: 2d50238f1cf343e19ef57ce946fb9611
+            - uuid: b82f55eda1ee4821ad0244b42cccb563
               name: 'Volume {#VOLUME}: shadow copies'
               type: DEPENDENT
               key: 'int.role.vss.count[{#VOLUME}]'
@@ -167,7 +167,7 @@ zabbix_export:
                 - tag: component
                   value: vss
           trigger_prototypes:
-            - uuid: 958b6df066424f438ce48eed4188d1a0
+            - uuid: 14eb8886b5c549688893c2582df1c3f7
               expression: 'last(/INT MON-ROLE File server/int.role.vss.count[{#VOLUME}])<{$INT.ROLE.VSS.DROP.PCT}/100*max(/INT MON-ROLE File server/int.role.vss.count[{#VOLUME}],1d) and max(/INT MON-ROLE File server/int.role.vss.count[{#VOLUME}],1d)>=2'
               name: 'INT: Shadow copies on {HOST.NAME} {#VOLUME} dropped from {ITEM.LASTVALUE2} to {ITEM.LASTVALUE1}'
               priority: HIGH
@@ -175,7 +175,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: security
-            - uuid: b70e59c46be9415580fff1e0fff09db0
+            - uuid: c881e812105d49dcad4d92ef93efc884
               expression: 'last(/INT MON-ROLE File server/int.role.vss.age[{#VOLUME}])>{$INT.ROLE.VSS.AGE.MAX} or last(/INT MON-ROLE File server/int.role.vss.age[{#VOLUME}])=-1'
               name: 'INT: Newest shadow copy on {HOST.NAME} {#VOLUME} is older than {$INT.ROLE.VSS.AGE.MAX} h'
               priority: AVERAGE
@@ -190,7 +190,7 @@ zabbix_export:
               path: $.volume
             - lld_macro: '{#COUNT}'
               path: $.count
-        - uuid: 815e8019c3be4a13879cdc6ebc98c503
+        - uuid: 004ec964a39942bdb27e0d83f0ead1a8
           name: 'FSRM quotas discovery'
           type: DEPENDENT
           key: int.role.fsrm.discovery
@@ -198,7 +198,7 @@ zabbix_export:
           lifetime: 7d
           enabled_lifetime_type: DISABLE_NEVER
           item_prototypes:
-            - uuid: 9940ee8849424c478720ac13002b66a2
+            - uuid: 37ed81909a994d44aa664189078cd75e
               name: 'Quota {#PATH}: used'
               type: DEPENDENT
               key: 'int.role.fsrm.pct[{#PATH}]'
@@ -216,7 +216,7 @@ zabbix_export:
                 - tag: component
                   value: quota
           trigger_prototypes:
-            - uuid: c3f30a1ccfb8460d9143b240988ed914
+            - uuid: d392f2bf004c44529bf64b0f581d4a02
               expression: 'last(/INT MON-ROLE File server/int.role.fsrm.pct[{#PATH}])>{$INT.ROLE.FSRM.CRIT}'
               name: 'INT: Quota {#PATH} on {HOST.NAME} is {ITEM.LASTVALUE1} full'
               priority: AVERAGE
@@ -224,7 +224,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: capacity
-            - uuid: f1a7a0237cba4ad7988033c5b64e6d78
+            - uuid: 1910c50a786e4aa8b2548478e1fca9bc
               expression: 'last(/INT MON-ROLE File server/int.role.fsrm.pct[{#PATH}])>{$INT.ROLE.FSRM.WARN}'
               name: 'INT: Quota {#PATH} on {HOST.NAME} is {ITEM.LASTVALUE1} full (> {$INT.ROLE.FSRM.WARN} %)'
               priority: WARNING
@@ -239,7 +239,7 @@ zabbix_export:
           lld_macro_paths:
             - lld_macro: '{#PATH}'
               path: $.path
-        - uuid: aa4532db023f4c3cb5558c89a84d11b1
+        - uuid: 5c1dcdc720304f348fbe32287c899c96
           name: 'DFS-R inbound connections discovery'
           type: DEPENDENT
           key: int.role.dfsr.discovery
@@ -247,7 +247,7 @@ zabbix_export:
           lifetime: 7d
           enabled_lifetime_type: DISABLE_NEVER
           item_prototypes:
-            - uuid: 82afdd5237a94536839f752a67b74302
+            - uuid: c09a206bd8254d8b9570310932800aad
               name: 'DFS-R {#FOLDER} from {#PARTNER}: backlog'
               type: DEPENDENT
               key: 'int.role.dfsr.backlog[{#FOLDER},{#PARTNER}]'
@@ -264,7 +264,7 @@ zabbix_export:
                 - tag: component
                   value: dfsr
           trigger_prototypes:
-            - uuid: c494bdaaa66e4134927c2a1b0d2a3e9c
+            - uuid: cabc920629474af5ba40bda2433e683e
               expression: 'min(/INT MON-ROLE File server/int.role.dfsr.backlog[{#FOLDER},{#PARTNER}],{$INT.ROLE.DFSR.TIME})>{$INT.ROLE.DFSR.MAX}'
               name: 'INT: DFS-R backlog {#FOLDER} from {#PARTNER} on {HOST.NAME}: {ITEM.LASTVALUE1} files'
               priority: AVERAGE
@@ -272,7 +272,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: availability
-            - uuid: 3f7777d44a914cb5b29236bf549c97ff
+            - uuid: af568d6c68c24f2287047610623d73b7
               expression: 'min(/INT MON-ROLE File server/int.role.dfsr.backlog[{#FOLDER},{#PARTNER}],{$INT.ROLE.DFSR.TIME})=-1'
               name: 'INT: DFS-R backlog of {#FOLDER} from {#PARTNER} cannot be read'
               priority: WARNING
@@ -287,7 +287,7 @@ zabbix_export:
               path: $.folder
             - lld_macro: '{#PARTNER}'
               path: $.partner
-        - uuid: 8178edf2dcc14dd9a47e86fff741ef7f
+        - uuid: e833e8bcdcee49debfd6063bc3be012d
           name: 'File server services from {$INT.ROLE.FILE.SERVICES}'
           type: SCRIPT
           key: 'int.role.services[file_server]'
@@ -314,18 +314,18 @@ zabbix_export:
           enabled_lifetime_type: DISABLE_NEVER
           description: 'Service (short) names separated by ;. Exclude them from the MON-SRV official service discovery ({$SERVICE.NAME.NOT_MATCHES}).'
           item_prototypes:
-            - uuid: 45bc512db8134ec5b65777ae1e10db32
+            - uuid: 431a2ca72500434db0fb0f32ecd17fe3
               name: 'Service {#SERVICE}: state'
               type: ZABBIX_ACTIVE
               key: 'service.info[{#SERVICE}]'
               delay: 1m
               valuemap:
-                name: 'INT ROLE service state'
+                name: 'INT ROLE FILE service state'
               tags:
                 - tag: component
                   value: service
           trigger_prototypes:
-            - uuid: 925af92f82b047d29148f6c957c43790
+            - uuid: 2bc7245b39984e3cb4c82dc537bc22a5
               expression: 'min(/INT MON-ROLE File server/service.info[{#SERVICE}],#3)<>0'
               name: 'INT: File server service {#SERVICE} is not running on {HOST.NAME}'
               opdata: '{ITEM.LASTVALUE1}'
@@ -366,8 +366,8 @@ zabbix_export:
           value: '50'
           description: 'HIGH when the count falls below this % of the 1-day maximum.'
       valuemaps:
-        - uuid: 30a1b9163dd149b6b1d93c8fd08c72bc
-          name: 'INT ROLE service state'
+        - uuid: 24647004d5314fcf9aae1a8322fc5ee8
+          name: 'INT ROLE FILE service state'
           mappings:
             - value: '0'
               newvalue: Running
@@ -387,14 +387,14 @@ zabbix_export:
               newvalue: Unknown
             - value: '255'
               newvalue: 'No such service'
-        - uuid: 0aaa316b2cd94075bf8d39b649714c2a
-          name: 'INT ROLE yes/no'
+        - uuid: e27f6db875c5468885b35ef364cf0785
+          name: 'INT ROLE FILE yes/no'
           mappings:
             - value: '0'
               newvalue: 'no'
             - value: '1'
               newvalue: 'yes'
-    - uuid: ae49ffe2b54e47b486e95c495946d94d
+    - uuid: 9d4672698c514b9696fa8e604fad9cbc
       template: 'INT MON-ROLE DHCP server'
       name: 'INT MON-ROLE DHCP server'
       description: |
@@ -405,7 +405,7 @@ zabbix_export:
       groups:
         - name: Templates/Integrit/MON-ROLE
       items:
-        - uuid: afd1db7991294cfc8ac4a9cdc359d901
+        - uuid: 3a052ba699604729acbf719434730719
           name: 'DHCP: raw'
           type: ZABBIX_ACTIVE
           key: 'int.role.dhcp'
@@ -418,7 +418,7 @@ zabbix_export:
             - tag: component
               value: raw
       discovery_rules:
-        - uuid: 9c6ad25306a54558863cbf547f95fb0a
+        - uuid: 35ea084359d440d0b3506c9b4b8d3a87
           name: 'DHCP scopes discovery'
           type: DEPENDENT
           key: int.role.dhcp.scopes.discovery
@@ -432,7 +432,7 @@ zabbix_export:
           lifetime: 7d
           enabled_lifetime_type: DISABLE_NEVER
           item_prototypes:
-            - uuid: f79a71e31cb34f978c50cd8c5d97b69b
+            - uuid: 62ae168d58dd403ea06c2ca435998e0d
               name: 'Scope {#SCOPE} ({#NAME}): used'
               type: DEPENDENT
               key: 'int.role.dhcp.pct[{#SCOPE}]'
@@ -449,7 +449,7 @@ zabbix_export:
               tags:
                 - tag: component
                   value: dhcp
-            - uuid: 492e6fe8986a4cd0933ea0ebeffc51c0
+            - uuid: 06a0bafe96e44e5cb3f345eeb984ac97
               name: 'Scope {#SCOPE} ({#NAME}): free addresses'
               type: DEPENDENT
               key: 'int.role.dhcp.free[{#SCOPE}]'
@@ -465,7 +465,7 @@ zabbix_export:
                 - tag: component
                   value: dhcp
           trigger_prototypes:
-            - uuid: 971264a8fd8d40878b0f62000197cdb2
+            - uuid: 974818425d774ebc946912a442a1bd00
               expression: 'min(/INT MON-ROLE DHCP server/int.role.dhcp.pct[{#SCOPE}],10m)>{$INT.ROLE.DHCP.CRIT}'
               name: 'INT: DHCP scope {#SCOPE} ({#NAME}) on {HOST.NAME} is {ITEM.LASTVALUE1} used'
               priority: HIGH
@@ -473,7 +473,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: capacity
-            - uuid: 518a8f1f13d44015af92b2916d41fa6b
+            - uuid: bf91440cfaec4cd0adec9b3b98bc9d7f
               expression: 'min(/INT MON-ROLE DHCP server/int.role.dhcp.pct[{#SCOPE}],10m)>{$INT.ROLE.DHCP.WARN}'
               name: 'INT: DHCP scope {#SCOPE} ({#NAME}) on {HOST.NAME} is over {$INT.ROLE.DHCP.WARN} % used'
               priority: AVERAGE
@@ -494,7 +494,7 @@ zabbix_export:
             - type: JSONPATH
               parameters:
                 - $.scopes
-        - uuid: b7aeb213a593469da4dcc1a97902ae59
+        - uuid: 9ba4070dc57842a39316adef58ac4d3c
           name: 'DHCP failover discovery'
           type: DEPENDENT
           key: int.role.dhcp.failover.discovery
@@ -502,7 +502,7 @@ zabbix_export:
           lifetime: 7d
           enabled_lifetime_type: DISABLE_NEVER
           item_prototypes:
-            - uuid: 1c79b8d29d134e9f9fc30b54c5495468
+            - uuid: e96417c81b06447484ecad38a849a5a1
               name: 'Failover {#FAILOVER}: state'
               type: DEPENDENT
               key: 'int.role.dhcp.failover[{#FAILOVER}]'
@@ -520,7 +520,7 @@ zabbix_export:
                 - tag: component
                   value: dhcp
           trigger_prototypes:
-            - uuid: 9a5250aa465746ad8dffb79ca47dd49f
+            - uuid: 6b6af709e2e848e3b169fa1c6041f05a
               expression: 'last(/INT MON-ROLE DHCP server/int.role.dhcp.failover[{#FAILOVER}])<>"Normal" and last(/INT MON-ROLE DHCP server/int.role.dhcp.failover[{#FAILOVER}],#2)<>"Normal"'
               name: 'INT: DHCP failover {#FAILOVER} on {HOST.NAME} is {ITEM.LASTVALUE1}'
               priority: HIGH
@@ -537,7 +537,7 @@ zabbix_export:
             - type: JSONPATH
               parameters:
                 - $.failover
-        - uuid: 9238ce27facd44839a8eb33d6861c756
+        - uuid: 5e70ae007b4f44e4bb90006d6b358845
           name: 'DHCP services from {$INT.ROLE.DHCP.SERVICES}'
           type: SCRIPT
           key: 'int.role.services[dhcp]'
@@ -564,18 +564,18 @@ zabbix_export:
           enabled_lifetime_type: DISABLE_NEVER
           description: 'Service (short) names separated by ;. Exclude them from the MON-SRV official service discovery ({$SERVICE.NAME.NOT_MATCHES}).'
           item_prototypes:
-            - uuid: 73621c8729194f0484cadd40f9712003
+            - uuid: 27feb1cd9d3d4ec2aabc991901ad2aae
               name: 'Service {#SERVICE}: state'
               type: ZABBIX_ACTIVE
               key: 'service.info[{#SERVICE}]'
               delay: 1m
               valuemap:
-                name: 'INT ROLE service state'
+                name: 'INT ROLE DHCP service state'
               tags:
                 - tag: component
                   value: service
           trigger_prototypes:
-            - uuid: cab1df316a14470c836d7be942120cbd
+            - uuid: 69f26c2e606d4ce0b14326b4ff6615ce
               expression: 'min(/INT MON-ROLE DHCP server/service.info[{#SERVICE}],#3)<>0'
               name: 'INT: DHCP service {#SERVICE} is not running on {HOST.NAME}'
               opdata: '{ITEM.LASTVALUE1}'
@@ -600,8 +600,8 @@ zabbix_export:
         - macro: '{$INT.ROLE.DHCP.WARN}'
           value: '85'
       valuemaps:
-        - uuid: 22d89f7c56cc4d50a396d8d2364e86ca
-          name: 'INT ROLE service state'
+        - uuid: adcd133956224c4790f2dc58ad785fd0
+          name: 'INT ROLE DHCP service state'
           mappings:
             - value: '0'
               newvalue: Running
@@ -621,7 +621,7 @@ zabbix_export:
               newvalue: Unknown
             - value: '255'
               newvalue: 'No such service'
-    - uuid: fac953202a7943be854ab1db73d83e65
+    - uuid: 083c36c44304407288ced37ebc9c929d
       template: 'INT MON-ROLE DNS server'
       name: 'INT MON-ROLE DNS server'
       description: |
@@ -633,7 +633,7 @@ zabbix_export:
       groups:
         - name: Templates/Integrit/MON-ROLE
       items:
-        - uuid: b1eb64713b50412598a9d96ba04a7ada
+        - uuid: d4ce2f7d25f349638182c15955480472
           name: 'DNS: raw'
           type: ZABBIX_ACTIVE
           key: 'int.role.dns["{$INT.ROLE.DNS.INTERNAL}","{$INT.ROLE.DNS.EXTERNAL}"]'
@@ -645,7 +645,7 @@ zabbix_export:
           tags:
             - tag: component
               value: raw
-        - uuid: 0d5eda09392b4b3e8c7ccacf0a07c3c4
+        - uuid: 210fe4c5723f49eca7da7775017f1957
           name: 'DNS: internal name resolves'
           type: DEPENDENT
           key: 'int.role.dns.internal'
@@ -657,14 +657,14 @@ zabbix_export:
                 - '$.internal'
               error_handler: DISCARD_VALUE
           valuemap:
-            name: 'INT ROLE yes/no'
+            name: 'INT ROLE DNS yes/no'
           master_item:
             key: 'int.role.dns["{$INT.ROLE.DNS.INTERNAL}","{$INT.ROLE.DNS.EXTERNAL}"]'
           tags:
             - tag: component
               value: dns
           triggers:
-            - uuid: 8befccc3cb8e4951be081615e57603ee
+            - uuid: 8ddcf1a0c15d4be3a1eaa848700b9d6f
               expression: 'max(/INT MON-ROLE DNS server/int.role.dns.internal,#2)=0'
               name: 'INT: DNS server {HOST.NAME} does not resolve internal names'
               priority: HIGH
@@ -672,7 +672,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: availability
-        - uuid: 6d219a8f9f234f518b27f44af2362909
+        - uuid: b3b40f61c8944e0a8c3bc895aa0fba8a
           name: 'DNS: external name resolves'
           type: DEPENDENT
           key: 'int.role.dns.external'
@@ -684,14 +684,14 @@ zabbix_export:
                 - '$.external'
               error_handler: DISCARD_VALUE
           valuemap:
-            name: 'INT ROLE yes/no'
+            name: 'INT ROLE DNS yes/no'
           master_item:
             key: 'int.role.dns["{$INT.ROLE.DNS.INTERNAL}","{$INT.ROLE.DNS.EXTERNAL}"]'
           tags:
             - tag: component
               value: dns
           triggers:
-            - uuid: 17a46c50ecb44b8baa694e85afba68bc
+            - uuid: f7a8634517d349b692b0125de740d3e2
               expression: 'max(/INT MON-ROLE DNS server/int.role.dns.external,#2)=0'
               name: 'INT: DNS server {HOST.NAME} does not resolve internet names'
               priority: HIGH
@@ -699,7 +699,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: availability
-        - uuid: 8d6500b3346f456c8eae770439c81c3f
+        - uuid: 6b1b5beb953d43bf80023335d9bf9de3
           name: 'DNS: forwarders not answering'
           type: DEPENDENT
           key: 'int.role.dns.forwarders.bad'
@@ -715,7 +715,7 @@ zabbix_export:
             - tag: component
               value: dns
           triggers:
-            - uuid: 2784b42ea03c4e34863403edcffaa353
+            - uuid: dfca4edf47684a6a9ec4b6dc0aa2c241
               expression: 'min(/INT MON-ROLE DNS server/int.role.dns.forwarders.bad,#2)>0 and length(last(/INT MON-ROLE DNS server/int.role.dns.forwarders.list))>=0'
               name: 'INT: DNS forwarders of {HOST.NAME} not answering'
               opdata: '{ITEM.LASTVALUE2}'
@@ -724,7 +724,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: availability
-        - uuid: 9ff22e840d6141fdbe214634e176caf7
+        - uuid: e63c5600248a475d9c65ce40dff0d599
           name: 'DNS: forwarders not answering list'
           type: DEPENDENT
           key: 'int.role.dns.forwarders.list'
@@ -741,7 +741,7 @@ zabbix_export:
           tags:
             - tag: component
               value: dns
-        - uuid: 364102cdb09540b1b3d98b6256ded070
+        - uuid: 4bbdaa2da116422298e8ce2704518e27
           name: 'DNS: forwarders configured'
           type: DEPENDENT
           key: 'int.role.dns.forwarders'
@@ -756,7 +756,7 @@ zabbix_export:
           tags:
             - tag: component
               value: dns
-        - uuid: 2dcc7cfed41e4b0894e6ce42cfd2be5e
+        - uuid: 04202b06da94417ebe24e80c0210ac27
           name: 'DNS: AD-integrated zone errors'
           type: ZABBIX_ACTIVE
           key: 'eventlog["DNS Server",,"Error",,"^(4000|4004|4007|4013|4015|6702)$",,skip]'
@@ -769,7 +769,7 @@ zabbix_export:
             - tag: component
               value: dns
           triggers:
-            - uuid: 891ffde6bf7a4f669797d4e55c8e2d58
+            - uuid: 72824a84988b4022a62dd8545959e5bd
               expression: 'count(/INT MON-ROLE DNS server/eventlog["DNS Server",,"Error",,"^(4000|4004|4007|4013|4015|6702)$",,skip],1h)>0'
               name: 'INT: DNS server {HOST.NAME} reports AD zone errors'
               opdata: '{ITEM.LASTVALUE1}'
@@ -779,7 +779,7 @@ zabbix_export:
                 - tag: scope
                   value: availability
       discovery_rules:
-        - uuid: b624f175e4ad44b08d51e4330100ab48
+        - uuid: 6c9d1ee1d65e40bdbf8a413c210fbf9b
           name: 'DNS services from {$INT.ROLE.DNS.SERVICES}'
           type: SCRIPT
           key: 'int.role.services[dns]'
@@ -806,18 +806,18 @@ zabbix_export:
           enabled_lifetime_type: DISABLE_NEVER
           description: 'Service (short) names separated by ;. Exclude them from the MON-SRV official service discovery ({$SERVICE.NAME.NOT_MATCHES}).'
           item_prototypes:
-            - uuid: ab79a5f377044eb78217e0e0a6876563
+            - uuid: 050afaef0102490bb9c2b11fe34a583a
               name: 'Service {#SERVICE}: state'
               type: ZABBIX_ACTIVE
               key: 'service.info[{#SERVICE}]'
               delay: 1m
               valuemap:
-                name: 'INT ROLE service state'
+                name: 'INT ROLE DNS service state'
               tags:
                 - tag: component
                   value: service
           trigger_prototypes:
-            - uuid: d294131408684d9a812a6ff184c23635
+            - uuid: aacc688ae5904b72a76dfaa21d080cbc
               expression: 'min(/INT MON-ROLE DNS server/service.info[{#SERVICE}],#3)<>0'
               name: 'INT: DNS service {#SERVICE} is not running on {HOST.NAME}'
               opdata: '{ITEM.LASTVALUE1}'
@@ -839,8 +839,8 @@ zabbix_export:
         - macro: '{$INT.ROLE.DNS.SERVICES}'
           value: 'DNS'
       valuemaps:
-        - uuid: 1b4ed48a75554f8abc86e935d078098b
-          name: 'INT ROLE service state'
+        - uuid: 372fdbed6fde4aa2b2b01da6cd4b8787
+          name: 'INT ROLE DNS service state'
           mappings:
             - value: '0'
               newvalue: Running
@@ -860,8 +860,8 @@ zabbix_export:
               newvalue: Unknown
             - value: '255'
               newvalue: 'No such service'
-        - uuid: 1cf345691b2b43518676bf348719cd60
-          name: 'INT ROLE yes/no'
+        - uuid: d70894001c934cdbb9a967667015879f
+          name: 'INT ROLE DNS yes/no'
           mappings:
             - value: '-1'
               newvalue: 'not tested'
@@ -869,7 +869,7 @@ zabbix_export:
               newvalue: 'no'
             - value: '1'
               newvalue: 'yes'
-    - uuid: fdd8083a582f42f8b30d323eb627d32a
+    - uuid: e702e3abb6dc459a8ff7e06c24815c1f
       template: 'INT MON-ROLE Print server'
       name: 'INT MON-ROLE Print server'
       description: |
@@ -880,7 +880,7 @@ zabbix_export:
       groups:
         - name: Templates/Integrit/MON-ROLE
       items:
-        - uuid: 75df21d8355541e781666f4e6aeeae16
+        - uuid: 60a74c37d02a4ba89a9ee916b3d9c52d
           name: 'Print: raw'
           type: ZABBIX_ACTIVE
           key: 'int.role.print[{$INT.ROLE.PRINT.STUCK.MIN}]'
@@ -892,7 +892,7 @@ zabbix_export:
           tags:
             - tag: component
               value: raw
-        - uuid: 21917588854146528cfc5323eaa461fa
+        - uuid: 3e26049c4d274cf29978f52c48619225
           name: 'Print: queues in error'
           type: DEPENDENT
           key: 'int.role.print.errors'
@@ -908,7 +908,7 @@ zabbix_export:
             - tag: component
               value: print
           triggers:
-            - uuid: e8f8026528bd4a48b7ca900366eabc41
+            - uuid: 53b1655e7c9e4a0190e5ca64cd7dca1f
               expression: 'min(/INT MON-ROLE Print server/int.role.print.errors,{$INT.ROLE.PRINT.TIME})>0 and length(last(/INT MON-ROLE Print server/int.role.print.errors.list))>=0'
               name: 'INT: Print queues in error on {HOST.NAME}'
               opdata: '{ITEM.LASTVALUE2}'
@@ -917,7 +917,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: availability
-        - uuid: 30019043fae540ec9b4968de1d50338d
+        - uuid: 9067be3f13304a7a86f47b70ac7410c8
           name: 'Print: queues in error list'
           type: DEPENDENT
           key: 'int.role.print.errors.list'
@@ -934,7 +934,7 @@ zabbix_export:
           tags:
             - tag: component
               value: print
-        - uuid: cf8b497116354a80947a1262921ebb11
+        - uuid: cb9312f48bc8441f89147e8f3f4fca8c
           name: 'Print: stuck jobs'
           type: DEPENDENT
           key: 'int.role.print.stuck'
@@ -950,7 +950,7 @@ zabbix_export:
             - tag: component
               value: print
           triggers:
-            - uuid: c22b50e90df04472a39877fc14ebfcaa
+            - uuid: ec4999cbe2e34da79c6f7c10aaa10e43
               expression: 'last(/INT MON-ROLE Print server/int.role.print.stuck)>0 and length(last(/INT MON-ROLE Print server/int.role.print.stuck.list))>=0'
               name: 'INT: Print jobs stuck for more than {$INT.ROLE.PRINT.STUCK.MIN} min on {HOST.NAME}'
               opdata: '{ITEM.LASTVALUE2}'
@@ -959,7 +959,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: availability
-        - uuid: 3ebf0317ca004247886ad4ac5896d036
+        - uuid: bde07340c72b453b9b4fae0df13bdfab
           name: 'Print: stuck jobs list'
           type: DEPENDENT
           key: 'int.role.print.stuck.list'
@@ -977,7 +977,7 @@ zabbix_export:
             - tag: component
               value: print
       discovery_rules:
-        - uuid: 1ceb3f89f7124ee787d71c647346e70d
+        - uuid: b40b6a4e50e14471926a32de5ca7c3b8
           name: 'Print services from {$INT.ROLE.PRINT.SERVICES}'
           type: SCRIPT
           key: 'int.role.services[print]'
@@ -1004,18 +1004,18 @@ zabbix_export:
           enabled_lifetime_type: DISABLE_NEVER
           description: 'Service (short) names separated by ;. Exclude them from the MON-SRV official service discovery ({$SERVICE.NAME.NOT_MATCHES}).'
           item_prototypes:
-            - uuid: c264755805a847288b8cae6b5a5c5cec
+            - uuid: f4b6166446f34e9687ba155f9a2136f9
               name: 'Service {#SERVICE}: state'
               type: ZABBIX_ACTIVE
               key: 'service.info[{#SERVICE}]'
               delay: 1m
               valuemap:
-                name: 'INT ROLE service state'
+                name: 'INT ROLE PRINT service state'
               tags:
                 - tag: component
                   value: service
           trigger_prototypes:
-            - uuid: 2537ff8e70c043ce9fc4fc63afe725f4
+            - uuid: 0e7854b0c8f34dfb936170a4947b5b58
               expression: 'min(/INT MON-ROLE Print server/service.info[{#SERVICE}],#3)<>0'
               name: 'INT: Print service {#SERVICE} is not running on {HOST.NAME}'
               opdata: '{ITEM.LASTVALUE1}'
@@ -1037,8 +1037,8 @@ zabbix_export:
         - macro: '{$INT.ROLE.PRINT.TIME}'
           value: '15m'
       valuemaps:
-        - uuid: 598d32e3873b43a6b4446cc2e6f535a1
-          name: 'INT ROLE service state'
+        - uuid: 8f11697269a643e3a5971bd2a7be8224
+          name: 'INT ROLE PRINT service state'
           mappings:
             - value: '0'
               newvalue: Running
@@ -1058,7 +1058,7 @@ zabbix_export:
               newvalue: Unknown
             - value: '255'
               newvalue: 'No such service'
-    - uuid: 6f31ec75f1914d738c23795bca8e0aa9
+    - uuid: 29f04691fbf94550a85a8b379308564b
       template: 'INT MON-ROLE RDS'
       name: 'INT MON-ROLE RDS'
       description: |
@@ -1070,7 +1070,7 @@ zabbix_export:
       groups:
         - name: Templates/Integrit/MON-ROLE
       items:
-        - uuid: cdd0692f797544ecb4fd819f5216f62c
+        - uuid: 4bd5646f66a044d89feaeb834bbc8603
           name: 'RDS: licensing raw'
           type: ZABBIX_ACTIVE
           key: 'int.role.rds'
@@ -1082,7 +1082,7 @@ zabbix_export:
           tags:
             - tag: component
               value: raw
-        - uuid: 35113344532747da8708fb41dafff2d1
+        - uuid: 3dad7311640044dd91f2fac58a9af019
           name: 'RDS: licensing grace period days left'
           type: DEPENDENT
           key: 'int.role.rds.grace'
@@ -1100,7 +1100,7 @@ zabbix_export:
             - tag: component
               value: rds
           triggers:
-            - uuid: 35760aab15594300a9efdf244b0444ef
+            - uuid: 4826f46b543e4f9ead20ee5e7bf13320
               expression: 'last(/INT MON-ROLE RDS/int.role.rds.grace)>=0 and last(/INT MON-ROLE RDS/int.role.rds.grace)<={$INT.ROLE.RDS.GRACE.MIN}'
               name: 'INT: RDS licensing grace period on {HOST.NAME} ends in {ITEM.LASTVALUE1}'
               priority: HIGH
@@ -1108,7 +1108,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: licensing
-        - uuid: 3fcd07a55e8b43d18d8752683d998a04
+        - uuid: 03ca198fc6dd4d57adf0ff094740ddda
           name: 'RDS: CALs available'
           type: DEPENDENT
           key: 'int.role.rds.cal.available'
@@ -1125,7 +1125,7 @@ zabbix_export:
             - tag: component
               value: rds
           triggers:
-            - uuid: bc2005b93c15483780d02ae217fb577d
+            - uuid: 5cfd2c0ff94d491c92488b3ff43b788d
               expression: 'last(/INT MON-ROLE RDS/int.role.rds.cal.available)>=0 and last(/INT MON-ROLE RDS/int.role.rds.cal.available)<{$INT.ROLE.RDS.CAL.MIN} and last(/INT MON-ROLE RDS/int.role.rds.cal.total)>0'
               name: 'INT: RDS CALs nearly exhausted on {HOST.NAME}: {ITEM.LASTVALUE1} left'
               priority: HIGH
@@ -1133,7 +1133,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: licensing
-        - uuid: 949dfbc2a1794cb6b82440f11ef0d283
+        - uuid: d00942821a3e40fcbc12bec0f64cb049
           name: 'RDS: CALs total'
           type: DEPENDENT
           key: 'int.role.rds.cal.total'
@@ -1148,7 +1148,7 @@ zabbix_export:
           tags:
             - tag: component
               value: rds
-        - uuid: 2065f7e4c94043e9b666cce4c1a33398
+        - uuid: 7ffb73b62eb6424b90f3e75a6f4e4856
           name: 'RDS: active sessions'
           type: ZABBIX_ACTIVE
           key: 'perf_counter_en["\Terminal Services\Active Sessions"]'
@@ -1157,7 +1157,7 @@ zabbix_export:
             - tag: component
               value: rds
           triggers:
-            - uuid: ecd70057e8b146c3b23f373dab772414
+            - uuid: e42d7d8e259d46769712618151f76419
               expression: 'min(/INT MON-ROLE RDS/perf_counter_en["\Terminal Services\Active Sessions"],30m)>{$INT.ROLE.RDS.SESSIONS.MAX}'
               name: 'INT: RDS session host {HOST.NAME} near capacity: {ITEM.LASTVALUE1} sessions'
               priority: WARNING
@@ -1166,7 +1166,7 @@ zabbix_export:
                 - tag: scope
                   value: capacity
       discovery_rules:
-        - uuid: 01e23a6244a945b58bfdfe0346040f0b
+        - uuid: 54fb7c9435f544479d2e86d3c4d25fba
           name: 'RDS services from {$INT.ROLE.RDS.SERVICES}'
           type: SCRIPT
           key: 'int.role.services[rds]'
@@ -1193,18 +1193,18 @@ zabbix_export:
           enabled_lifetime_type: DISABLE_NEVER
           description: 'Service (short) names separated by ;. Exclude them from the MON-SRV official service discovery ({$SERVICE.NAME.NOT_MATCHES}).'
           item_prototypes:
-            - uuid: 5d5cf79b2c8f4239a28a4659b6a92523
+            - uuid: 193f409ef2ca4dcbb5d6c09b4b016086
               name: 'Service {#SERVICE}: state'
               type: ZABBIX_ACTIVE
               key: 'service.info[{#SERVICE}]'
               delay: 1m
               valuemap:
-                name: 'INT ROLE service state'
+                name: 'INT ROLE RDS service state'
               tags:
                 - tag: component
                   value: service
           trigger_prototypes:
-            - uuid: be25705347eb4bfbbdd512a8e8d98993
+            - uuid: 2ef32943016e4723bae5897aab36666e
               expression: 'min(/INT MON-ROLE RDS/service.info[{#SERVICE}],#3)<>0'
               name: 'INT: RDS service {#SERVICE} is not running on {HOST.NAME}'
               opdata: '{ITEM.LASTVALUE1}'
@@ -1230,8 +1230,8 @@ zabbix_export:
         - macro: '{$INT.ROLE.RDS.SESSIONS.MAX}'
           value: '30'
       valuemaps:
-        - uuid: c2874763f1ac48d99f432620a650188a
-          name: 'INT ROLE service state'
+        - uuid: d5681d2c27494d8a811ab28750eb0dfd
+          name: 'INT ROLE RDS service state'
           mappings:
             - value: '0'
               newvalue: Running
@@ -1251,7 +1251,7 @@ zabbix_export:
               newvalue: Unknown
             - value: '255'
               newvalue: 'No such service'
-    - uuid: 8456e14c198941f8b4dc6536f1262e2a
+    - uuid: 2aa3d8c629004e648589be7a05c66637
       template: 'INT MON-ROLE IIS'
       name: 'INT MON-ROLE IIS'
       description: |
@@ -1263,7 +1263,7 @@ zabbix_export:
       groups:
         - name: Templates/Integrit/MON-ROLE
       discovery_rules:
-        - uuid: 49bf4408486d4c9f846e99b08895e709
+        - uuid: 9bfac89a34c14cb2aaeb0dd9bd1887ff
           name: 'Application pools discovery'
           type: ZABBIX_ACTIVE
           key: 'wmi.getall[root\webAdministration, select Name from ApplicationPool]'
@@ -1281,18 +1281,18 @@ zabbix_export:
           lifetime: 7d
           enabled_lifetime_type: DISABLE_NEVER
           item_prototypes:
-            - uuid: b9d1a18d3c6542c9bb2144a8fa3dec94
+            - uuid: ef882af5b65949a9b2b9af0bdc18afda
               name: 'AppPool {#APPPOOL}: state'
               type: ZABBIX_ACTIVE
               key: 'perf_counter_en["\APP_POOL_WAS({#APPPOOL})\Current Application Pool State"]'
               delay: 1m
               description: '3 = Running.'
               valuemap:
-                name: 'INT ROLE app pool state'
+                name: 'INT ROLE IIS app pool state'
               tags:
                 - tag: component
                   value: iis
-            - uuid: 0c7da734625747b7b5b007ae61d674d2
+            - uuid: 1024527e629144898c0e599ed27f186c
               name: 'AppPool {#APPPOOL}: request queue'
               type: ZABBIX_ACTIVE
               key: 'perf_counter_en["\HTTP Service Request Queues({#APPPOOL})\CurrentQueueSize"]'
@@ -1301,7 +1301,7 @@ zabbix_export:
                 - tag: component
                   value: iis
           trigger_prototypes:
-            - uuid: 930d6abb243f453caee116e0755474d2
+            - uuid: d0aad211a88c4bdaafcbdaeb9b6f6afc
               expression: 'min(/INT MON-ROLE IIS/perf_counter_en["\APP_POOL_WAS({#APPPOOL})\Current Application Pool State"],#3)<>3'
               name: 'INT: IIS application pool {#APPPOOL} on {HOST.NAME} is not running'
               opdata: '{ITEM.LASTVALUE1}'
@@ -1310,7 +1310,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: availability
-            - uuid: a8b47d1a15d14dec8a72bbcb21317584
+            - uuid: 0a7d5bc7a53e4bfe8a4879cee3fe64ba
               expression: 'min(/INT MON-ROLE IIS/perf_counter_en["\HTTP Service Request Queues({#APPPOOL})\CurrentQueueSize"],{$INT.ROLE.IIS.QUEUE.TIME})>{$INT.ROLE.IIS.QUEUE.MAX}'
               name: 'INT: IIS request queue of {#APPPOOL} on {HOST.NAME} is too long'
               priority: WARNING
@@ -1321,7 +1321,7 @@ zabbix_export:
           lld_macro_paths:
             - lld_macro: '{#APPPOOL}'
               path: $.Name
-        - uuid: 0e022a14b1694fb3bdf6547c0a495bd6
+        - uuid: 7b54f6cd409a446db6b48e7126651643
           name: 'IIS services from {$INT.ROLE.IIS.SERVICES}'
           type: SCRIPT
           key: 'int.role.services[iis]'
@@ -1348,18 +1348,18 @@ zabbix_export:
           enabled_lifetime_type: DISABLE_NEVER
           description: 'Service (short) names separated by ;. Exclude them from the MON-SRV official service discovery ({$SERVICE.NAME.NOT_MATCHES}).'
           item_prototypes:
-            - uuid: f84aa87629e0463195fdcbd068f5b19e
+            - uuid: 9b54dc1604484b058c6766f8daeb7d28
               name: 'Service {#SERVICE}: state'
               type: ZABBIX_ACTIVE
               key: 'service.info[{#SERVICE}]'
               delay: 1m
               valuemap:
-                name: 'INT ROLE service state'
+                name: 'INT ROLE IIS service state'
               tags:
                 - tag: component
                   value: service
           trigger_prototypes:
-            - uuid: cfbdfb6c78b34fb9a7bb645cad075b38
+            - uuid: ffd469ac0db34873b04d7e03a3e0e87a
               expression: 'min(/INT MON-ROLE IIS/service.info[{#SERVICE}],#3)<>0'
               name: 'INT: IIS service {#SERVICE} is not running on {HOST.NAME}'
               opdata: '{ITEM.LASTVALUE1}'
@@ -1386,8 +1386,8 @@ zabbix_export:
         - macro: '{$INT.ROLE.IIS.SERVICES}'
           value: 'W3SVC;WAS'
       valuemaps:
-        - uuid: cbc33637c1f14a9591e25ab8a85aba57
-          name: 'INT ROLE service state'
+        - uuid: 4740b9e2b47c4f329bd439f2be46ee49
+          name: 'INT ROLE IIS service state'
           mappings:
             - value: '0'
               newvalue: Running
@@ -1407,8 +1407,8 @@ zabbix_export:
               newvalue: Unknown
             - value: '255'
               newvalue: 'No such service'
-        - uuid: 215a1b9def6d49baa0c5d65e3f13ecb3
-          name: 'INT ROLE app pool state'
+        - uuid: 240049c8431f46f19dcbea9a348b3b88
+          name: 'INT ROLE IIS app pool state'
           mappings:
             - value: '1'
               newvalue: Uninitialized
@@ -1424,7 +1424,7 @@ zabbix_export:
               newvalue: 'Shutdown pending'
             - value: '7'
               newvalue: 'Delete pending'
-    - uuid: 002dfeae675b489581a3c4bc05d6650e
+    - uuid: 233c154bbe8549b980a5542512b8bf15
       template: 'INT MON-ROLE Nginx'
       name: 'INT MON-ROLE Nginx'
       description: |
@@ -1442,7 +1442,7 @@ zabbix_export:
           value: MON-ROLE
         - tag: version
           value: '1.0'
-    - uuid: 76eef566ba474699a0e8e39fab5af8d3
+    - uuid: 60249f97f95c4a00815dad1655d6c6e9
       template: 'INT MON-ROLE Apache'
       name: 'INT MON-ROLE Apache'
       description: |
@@ -1460,7 +1460,7 @@ zabbix_export:
           value: MON-ROLE
         - tag: version
           value: '1.0'
-    - uuid: a663364fae6c41259ae8c0d96e57c72a
+    - uuid: 9e92ba43ca2b4ca0938cdcbc6a029a13
       template: 'INT MON-ROLE PHP-FPM'
       name: 'INT MON-ROLE PHP-FPM'
       description: |

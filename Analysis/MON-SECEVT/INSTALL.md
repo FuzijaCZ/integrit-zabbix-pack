@@ -37,6 +37,9 @@ For NIS2 log retention a log platform (Wazuh, Sentinel, Graylog) is needed (draf
 | Linux: SSH failures | AVERAGE / HIGH | > 20 / > 100 in 5 min |
 | Linux: SSH logon from a public IP (not allowed) · sudo to root by an unexpected user · /etc/passwd or /etc/group changed | AVERAGE | manual |
 
+The official Linux template (inside MON-SRV) also raises an INFO "/etc/passwd has been changed"; MON-SECEVT adds the AVERAGE
+manual-close problem with its own checksum item (md5, to avoid a duplicate key).
+
 Not in v1.0: Windows account lockouts on member servers (DC event, MON-AD), auditd log cleared (root-only log), Linux 4698-style
 cron changes.
 

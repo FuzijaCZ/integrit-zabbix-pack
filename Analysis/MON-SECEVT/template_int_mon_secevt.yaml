@@ -1,10 +1,10 @@
 zabbix_export:
   version: '7.0'
   template_groups:
-    - uuid: 76f847952e6449c48ffdb876ca24d041
+    - uuid: 2b7e1b7db5dd4627aa255c7bc52a836c
       name: Templates/Integrit/MON-SECEVT
   templates:
-    - uuid: 7243cc7e9cd447a9af62818e9298060d
+    - uuid: 87cb006fd2f34040b74cc014367102a0
       template: 'INT MON-SECEVT Linux'
       name: 'INT MON-SECEVT Linux'
       description: |
@@ -16,7 +16,7 @@ zabbix_export:
       groups:
         - name: Templates/Integrit/MON-SECEVT
       items:
-        - uuid: 389844ab2e764dd2a414a3e05bb23e8f
+        - uuid: e2dcace978494fcda999ed6fcccac6b4
           name: 'Accounts: /etc/group checksum'
           type: ZABBIX_ACTIVE
           key: 'vfs.file.cksum[/etc/group,sha256]'
@@ -28,7 +28,7 @@ zabbix_export:
             - tag: component
               value: accounts
           triggers:
-            - uuid: 2db47f0a36e344a6a90bf64da3bfd41b
+            - uuid: 8eaa1d258dd04606987e3301b9390900
               expression: 'last(/INT MON-SECEVT Linux/vfs.file.cksum[/etc/group,sha256],#1)<>last(/INT MON-SECEVT Linux/vfs.file.cksum[/etc/group,sha256],#2)'
               recovery_mode: NONE
               name: 'INT: Local groups changed on {HOST.NAME}'
@@ -38,10 +38,10 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: security
-        - uuid: 9d914286164d40708fd53374ba3f5607
+        - uuid: f6272813584047b1a242b8bbb7033ff9
           name: 'Accounts: /etc/passwd checksum'
           type: ZABBIX_ACTIVE
-          key: 'vfs.file.cksum[/etc/passwd,sha256]'
+          key: 'vfs.file.cksum[/etc/passwd,md5]'
           delay: 5m
           history: 90d
           value_type: CHAR
@@ -50,8 +50,8 @@ zabbix_export:
             - tag: component
               value: accounts
           triggers:
-            - uuid: e75c0d5b42bf4b478c9159fc311c1f76
-              expression: 'last(/INT MON-SECEVT Linux/vfs.file.cksum[/etc/passwd,sha256],#1)<>last(/INT MON-SECEVT Linux/vfs.file.cksum[/etc/passwd,sha256],#2)'
+            - uuid: cddfe3de2e224759b30a6fc2b37040bd
+              expression: 'last(/INT MON-SECEVT Linux/vfs.file.cksum[/etc/passwd,md5],#1)<>last(/INT MON-SECEVT Linux/vfs.file.cksum[/etc/passwd,md5],#2)'
               recovery_mode: NONE
               name: 'INT: Local users changed on {HOST.NAME}'
               priority: AVERAGE
@@ -60,7 +60,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: security
-        - uuid: 392b4279255b4f13ac10847d76fc86bb
+        - uuid: ae9b744256154f11810c68e7a67c196c
           name: 'Security events raw'
           type: ZABBIX_ACTIVE
           key: 'int.secevt.linux["{$INT.SECEVT.WINDOW}","{$INT.SECEVT.SUDO.USERS}","{$INT.SECEVT.SSH.ALLOW}"]'
@@ -72,7 +72,7 @@ zabbix_export:
           tags:
             - tag: component
               value: raw
-        - uuid: c227d9e4bff440a28a6b9ea5634eee5d
+        - uuid: adf2c7333b0240f496fcb5a36d7056f7
           name: 'SSH: Failed authentications'
           type: DEPENDENT
           key: int.secevt.ssh.failed
@@ -87,7 +87,7 @@ zabbix_export:
             - tag: component
               value: events
           triggers:
-            - uuid: 655217b9435d4b6585f5c4a927865bd3
+            - uuid: 8ba385a609ce4833a4d1e6fa4b45a82d
               expression: 'last(/INT MON-SECEVT Linux/int.secevt.ssh.failed)>{$INT.SECEVT.FAILED.HIGH}'
               name: 'INT: SSH brute force on {HOST.NAME}: {ITEM.LASTVALUE1} failures in {$INT.SECEVT.WINDOW} min'
               priority: HIGH
@@ -95,7 +95,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: security
-            - uuid: a00243ccd74f4e2e89a3cb0c9d4e7f82
+            - uuid: 4f8fb01662c747fea95a069058a2dfc5
               expression: 'last(/INT MON-SECEVT Linux/int.secevt.ssh.failed)>{$INT.SECEVT.FAILED.WARN}'
               name: 'INT: Many SSH authentication failures on {HOST.NAME}: {ITEM.LASTVALUE1}'
               priority: AVERAGE
@@ -106,7 +106,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: security
-            - uuid: e90b21a708f74b64819661cd43cc40ce
+            - uuid: f8220f250b204558b504dff35159f23b
               expression: 'nodata(/INT MON-SECEVT Linux/int.secevt.ssh.failed,{$INT.SECEVT.NODATA})=1'
               name: 'INT: Security event data not received from {HOST.NAME}'
               priority: WARNING
@@ -114,7 +114,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: monitoring
-        - uuid: 33332ddc795a46e2aff0cb38dbae0f47
+        - uuid: 16f28f5043814eba955f07daac717c24
           name: 'SSH: Failed authentication sources'
           type: DEPENDENT
           key: int.secevt.ssh.ips
@@ -130,7 +130,7 @@ zabbix_export:
           tags:
             - tag: component
               value: events
-        - uuid: d4d437a9c369481d8c6cde2c7dc234e2
+        - uuid: 1a163f6e28294c11bcaec928d4c284d2
           name: 'SSH: Logons from public addresses'
           type: DEPENDENT
           key: int.secevt.ssh.public
@@ -145,7 +145,7 @@ zabbix_export:
             - tag: component
               value: events
           triggers:
-            - uuid: 3c8b6b84ee374159b74df6776451a13f
+            - uuid: 86f57d4cb88b40fab24806e25bd14ecb
               expression: 'last(/INT MON-SECEVT Linux/int.secevt.ssh.public)>0'
               recovery_mode: NONE
               name: 'INT: SSH logon from a public IP on {HOST.NAME}'
@@ -155,7 +155,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: security
-        - uuid: bba403935df3461e872758c2b5c06a96
+        - uuid: 6825f5757a1d49d18cdd51fd639e444a
           name: 'SSH: Public logon sources'
           type: DEPENDENT
           key: int.secevt.ssh.public.from
@@ -171,7 +171,7 @@ zabbix_export:
           tags:
             - tag: component
               value: events
-        - uuid: 823ccfc35d054da2837fe31f1201849e
+        - uuid: f21b331804074bb8a5fa19cd6dfc1a71
           name: 'sudo: Root commands by other users'
           type: DEPENDENT
           key: int.secevt.sudo.other
@@ -186,7 +186,7 @@ zabbix_export:
             - tag: component
               value: events
           triggers:
-            - uuid: 881e4d567b194c238d466238b2476b10
+            - uuid: 1e5ce770e0eb4eadb7ede39eb06cb9eb
               expression: 'last(/INT MON-SECEVT Linux/int.secevt.sudo.other)>0'
               recovery_mode: NONE
               name: 'INT: Unexpected user ran sudo as root on {HOST.NAME}'
@@ -196,7 +196,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: security
-        - uuid: 46ef4eb4f5804cfbaccf4068214f12dd
+        - uuid: a4e7a68271324042975a5e3c14f9721c
           name: 'sudo: Users'
           type: DEPENDENT
           key: int.secevt.sudo.users
@@ -231,7 +231,7 @@ zabbix_export:
           description: 'Comma list of users expected to use sudo to root (admins of this server), e.g. root,asmir.'
         - macro: '{$INT.SECEVT.WINDOW}'
           value: '5'
-    - uuid: 1421565fe4644b739c14ef3a1e1b29f7
+    - uuid: f66f344d04924a72810faa84060576aa
       template: 'INT MON-SECEVT Windows'
       name: 'INT MON-SECEVT Windows'
       description: |
@@ -246,7 +246,7 @@ zabbix_export:
       groups:
         - name: Templates/Integrit/MON-SECEVT
       items:
-        - uuid: 150b6a237c884bbc99f0f18aa334507a
+        - uuid: 7e963e0f6bff42c397c5c698aff11531
           name: 'Security: Audit log cleared'
           type: ZABBIX_ACTIVE
           key: 'eventlog[Security,,,,"^1102$",,skip]'
@@ -259,7 +259,7 @@ zabbix_export:
             - tag: component
               value: events
           triggers:
-            - uuid: 851de90bca98427c85cc6f86108dbdc4
+            - uuid: 31e51cba6ca84328ad560411283e78c4
               expression: 'length(last(/INT MON-SECEVT Windows/eventlog[Security,,,,"^1102$",,skip]))>0'
               recovery_mode: NONE
               name: 'INT: Security log was cleared on {HOST.NAME}'
@@ -270,7 +270,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: security
-        - uuid: 761648ff802b46feb071c9ed6b0f5c34
+        - uuid: 9392b7c0cf5a4539a3bfa7e0564435a5
           name: 'System: Event log cleared'
           type: ZABBIX_ACTIVE
           key: 'eventlog[System,,,"Microsoft-Windows-Eventlog","^104$",,skip]'
@@ -283,7 +283,7 @@ zabbix_export:
             - tag: component
               value: events
           triggers:
-            - uuid: 5aa1f899cf0b447fa106ab6c0f426426
+            - uuid: 4d96b5bb5bbe4dfe91a5e5947bbce8ae
               expression: 'length(last(/INT MON-SECEVT Windows/eventlog[System,,,"Microsoft-Windows-Eventlog","^104$",,skip]))>0'
               recovery_mode: NONE
               name: 'INT: An event log was cleared on {HOST.NAME}'
@@ -294,7 +294,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: security
-        - uuid: 9ecb65ca65fd427893a1adb04ee91091
+        - uuid: c7d356ccc56c4a5a9a7e4792f1012a49
           name: 'Security: Member added to privileged group'
           type: ZABBIX_ACTIVE
           key: 'eventlog[Security,"{$INT.SECEVT.GROUP.MATCHES}",,,"^(4728|4732|4756)$",,skip]'
@@ -307,7 +307,7 @@ zabbix_export:
             - tag: component
               value: events
           triggers:
-            - uuid: 2d7fa4edcbca4f608353d150cd46484a
+            - uuid: 353604b9f4a44168879158e46599baf2
               expression: 'length(last(/INT MON-SECEVT Windows/eventlog[Security,"{$INT.SECEVT.GROUP.MATCHES}",,,"^(4728|4732|4756)$",,skip]))>0'
               recovery_mode: NONE
               name: 'INT: Member added to a privileged group on {HOST.NAME}'
@@ -318,7 +318,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: security
-        - uuid: eb7782a85e6a4b4b9580ce105f01ded1
+        - uuid: 4202445bb1924063b1e91cd628d48be0
           name: 'Security: User account created'
           type: ZABBIX_ACTIVE
           key: 'eventlog[Security,,,,"^4720$",,skip]'
@@ -331,7 +331,7 @@ zabbix_export:
             - tag: component
               value: events
           triggers:
-            - uuid: 584b51961dda43b5a148b076adf680fc
+            - uuid: 4c845565c440461e88b52564837dc51f
               expression: 'length(last(/INT MON-SECEVT Windows/eventlog[Security,,,,"^4720$",,skip]))>0'
               recovery_mode: NONE
               name: 'INT: Local user account created on {HOST.NAME}'
@@ -342,7 +342,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: security
-        - uuid: 1a0a9160119843e5a3d3b96e3fab6e70
+        - uuid: 1536b569cc1c4a668ada8baf0bbe5062
           name: 'Security: Audit policy changed'
           type: ZABBIX_ACTIVE
           key: 'eventlog[Security,,,,"^4719$",,skip]'
@@ -355,7 +355,7 @@ zabbix_export:
             - tag: component
               value: events
           triggers:
-            - uuid: 6ea9599211a64167a585c08246707c12
+            - uuid: 3f684fba06484fcb8382504b8100cc60
               expression: 'length(last(/INT MON-SECEVT Windows/eventlog[Security,,,,"^4719$",,skip]))>0'
               recovery_mode: NONE
               name: 'INT: Audit policy changed on {HOST.NAME}'
@@ -366,7 +366,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: security
-        - uuid: 9cd852eb1a074966a0a08e2aa71a4060
+        - uuid: 2726c2a4e66c44d6b5a6dd4951266022
           name: 'System: New service installed'
           type: ZABBIX_ACTIVE
           key: 'eventlog[System,"{$INT.SECEVT.SERVICE.REGEX}",,"Service Control Manager","^7045$",,skip]'
@@ -379,7 +379,7 @@ zabbix_export:
             - tag: component
               value: events
           triggers:
-            - uuid: 16d3cce580cf4096bd3b873c007b6fc9
+            - uuid: 85f99765cfd2406386bb1b4507a3ddb4
               expression: 'length(last(/INT MON-SECEVT Windows/eventlog[System,"{$INT.SECEVT.SERVICE.REGEX}",,"Service Control Manager","^7045$",,skip]))>0'
               recovery_mode: NONE
               name: 'INT: New service installed on {HOST.NAME}'
@@ -390,7 +390,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: security
-        - uuid: ffaeb0528bdc40828f2058e396b22319
+        - uuid: 36de1a9cd2234733a0164e163bd6d9b0
           name: 'Security: Scheduled task created'
           type: ZABBIX_ACTIVE
           key: 'eventlog[Security,"{$INT.SECEVT.TASK.REGEX}",,,"^4698$",,skip]'
@@ -403,7 +403,7 @@ zabbix_export:
             - tag: component
               value: events
           triggers:
-            - uuid: e58e2fcc64224f9da6cabc1970ac2255
+            - uuid: a839528d5b704a5c96d2d96e066622c1
               expression: 'length(last(/INT MON-SECEVT Windows/eventlog[Security,"{$INT.SECEVT.TASK.REGEX}",,,"^4698$",,skip]))>0'
               recovery_mode: NONE
               name: 'INT: Scheduled task created on {HOST.NAME}'
@@ -414,7 +414,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: security
-        - uuid: 169f20a10e6e4066beab670c9261349a
+        - uuid: 620eb3e9674a42d993f076d9148cf1f3
           name: 'RDP: Logon from a public address'
           type: ZABBIX_ACTIVE
           key: 'eventlog["Microsoft-Windows-TerminalServices-LocalSessionManager/Operational","{$INT.SECEVT.RDP.PUBLIC.REGEX}",,,"^(21|25)$",,skip]'
@@ -427,7 +427,7 @@ zabbix_export:
             - tag: component
               value: events
           triggers:
-            - uuid: fcf26041418641028b410b34943a881c
+            - uuid: d8d70df520974f73adbec71b827d2c90
               expression: 'length(last(/INT MON-SECEVT Windows/eventlog["Microsoft-Windows-TerminalServices-LocalSessionManager/Operational","{$INT.SECEVT.RDP.PUBLIC.REGEX}",,,"^(21|25)$",,skip]))>0'
               recovery_mode: NONE
               name: 'INT: RDP logon from a public IP on {HOST.NAME}'
@@ -438,7 +438,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: security
-        - uuid: 200c8e2f0b1747b98a641c78a1890068
+        - uuid: 3068257e388d41b687c61dcbff98df9e
           name: 'Defender: Malware detection'
           type: ZABBIX_ACTIVE
           key: 'eventlog["Microsoft-Windows-Windows Defender/Operational",,,,"^(1116|1117)$",,skip]'
@@ -451,7 +451,7 @@ zabbix_export:
             - tag: component
               value: events
           triggers:
-            - uuid: 11bd3527966448b58dd34164d63de069
+            - uuid: e24d9b6212c848df83da58acb9afff7d
               expression: 'length(last(/INT MON-SECEVT Windows/eventlog["Microsoft-Windows-Windows Defender/Operational",,,,"^(1116|1117)$",,skip]))>0'
               recovery_mode: NONE
               name: 'INT: Microsoft Defender detected malware on {HOST.NAME}'
@@ -462,7 +462,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: security
-        - uuid: 067fd691f52f4f13b81e303544f00d78
+        - uuid: 41cbaa9b24374a6c8cc0ebe0d7cfde63
           name: 'Defender: Real-time protection state'
           type: ZABBIX_ACTIVE
           key: 'eventlog["Microsoft-Windows-Windows Defender/Operational",,,,"^(5000|5001)$",,skip]'
@@ -475,7 +475,7 @@ zabbix_export:
             - tag: component
               value: events
           triggers:
-            - uuid: e9aec0cf835e4a9f90167bd65b88cc85
+            - uuid: fe6bc2ccaacc49d48e33f93a9148702d
               expression: 'logeventid(/INT MON-SECEVT Windows/eventlog["Microsoft-Windows-Windows Defender/Operational",,,,"^(5000|5001)$",,skip],,"^5001$")=1'
               name: 'INT: Defender real-time protection disabled on {HOST.NAME}'
               opdata: '{ITEM.LASTVALUE1}'
@@ -484,7 +484,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: security
-        - uuid: 389c36e28d5844bf9dd9831bac99c2a9
+        - uuid: 8421c461cdf0459ab7ae591c70bffe4b
           name: 'Security: Failed logons raw'
           type: ZABBIX_ACTIVE
           key: 'int.secevt.failed[{$INT.SECEVT.WINDOW}]'
@@ -496,7 +496,7 @@ zabbix_export:
           tags:
             - tag: component
               value: raw
-        - uuid: 5713691e8ae04780a8ddbb7c1c8597d8
+        - uuid: ee2450e94f7e41cea6bb0edba09b6d54
           name: 'Security: Failed logons'
           type: DEPENDENT
           key: int.secevt.failed.count
@@ -512,7 +512,7 @@ zabbix_export:
             - tag: component
               value: logons
           triggers:
-            - uuid: a3446b5af48f4c1a9d025984289bd447
+            - uuid: 7a832a495b2d451ea3ee4db3f63363cc
               expression: 'last(/INT MON-SECEVT Windows/int.secevt.failed.count)>{$INT.SECEVT.FAILED.HIGH}'
               name: 'INT: Brute force on {HOST.NAME}: {ITEM.LASTVALUE1} failed logons in {$INT.SECEVT.WINDOW} min'
               priority: HIGH
@@ -520,7 +520,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: security
-            - uuid: 4502b814a4cc4248a9a6efc2ed276921
+            - uuid: ef52f7c3b2824fb0b4ad0f63d2ad6816
               expression: 'last(/INT MON-SECEVT Windows/int.secevt.failed.count)>{$INT.SECEVT.FAILED.WARN}'
               name: 'INT: Many failed logons on {HOST.NAME}: {ITEM.LASTVALUE1} in {$INT.SECEVT.WINDOW} min'
               priority: AVERAGE
@@ -531,7 +531,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: security
-            - uuid: 91ab9803003243d882e728f0d0b8542f
+            - uuid: 2f731d1be33b423db3078b5dc3cde208
               expression: 'nodata(/INT MON-SECEVT Windows/int.secevt.failed.count,{$INT.SECEVT.NODATA})=1'
               name: 'INT: Failed logon count not received from {HOST.NAME}'
               priority: WARNING
@@ -539,7 +539,7 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: monitoring
-        - uuid: b001794fbdd84e66a440ae9dc17cae5b
+        - uuid: 279df936213d44a390d0bedccdc6ec65
           name: 'Security: Failed logons top accounts'
           type: DEPENDENT
           key: int.secevt.failed.accounts
@@ -555,7 +555,7 @@ zabbix_export:
           tags:
             - tag: component
               value: logons
-        - uuid: c074289515ee4fb3b770e261a5d094db
+        - uuid: c5e02d6556a441a2988424791eac5c29
           name: 'Security: Failed logons top sources'
           type: DEPENDENT
           key: int.secevt.failed.ips
