@@ -10,6 +10,7 @@ No official Zabbix 7.0 AD template exists. Data comes from the DC's agent 2 (Pow
 | File | Where |
 |---|---|
 | `template_int_mon_ad.yaml` | Zabbix import |
+| `template_int_mon_ad_accounts.yaml` | Zabbix import (add-on `INT MON-AD Service accounts`) |
 | `windows/int_mon_ad.ps1` | `C:\Program Files\Zabbix Agent 2\scripts\int_mon_ad.ps1` |
 | `windows/int_mon_ad.conf` | `C:\Program Files\Zabbix Agent 2\zabbix_agent2.d\int_mon_ad.conf` |
 
@@ -30,6 +31,17 @@ No official Zabbix 7.0 AD template exists. Data comes from the DC's agent 2 (Pow
 | Account lockout surge | WARNING | > 10 new lockouts in 15 min |
 | dcdiag failed tests / dcdiag did not run | AVERAGE | daily |
 | Directory Service / DFS Replication problem events | AVERAGE | listed event IDs within 1 h |
+
+Add-on `INT MON-AD Service accounts` (link on every DC next to the main template, PDC reports):
+
+| Trigger | Severity | Default |
+|---|---|---|
+| Service account password expired | HIGH | members of `{$INT.AD.SVC.GROUP}` (`INT Service Accounts`) or accounts with a servicePrincipalName |
+| Service account password expires soon | AVERAGE | < 14 days (`{$INT.AD.ACCOUNTS.DAYS}`), exact expiry incl. fine-grained policies |
+| User accounts with an expiry date expire soon | INFO | report (contractors, temporary staff) |
+
+Create the AD group `INT Service Accounts` at the customer and add the service accounts that have no SPN (scan, backup, ERP,
+scheduled-task accounts). Accounts with "password never expires" are skipped (report them separately as a risk).
 
 Domain-wide checks (groups, krbtgt, lockouts) run only on the **PDC emulator**. The other DCs return nothing, so problems are not duplicated.
 When the PDC role moves, the new PDC reports. The group member history lives on that DC's host (item history 365 days).
@@ -74,13 +86,14 @@ On the DC's MON-SRV host:
 
 ## 4. Host
 
-On each DC host: add group `Services/MON-AD`, link `INT MON-AD Domain controller`, set `{$INT.AD.DOMAIN}` (e.g. `acme.local`).
+On each DC host: add group `Services/MON-AD`, link `INT MON-AD Domain controller` and `INT MON-AD Service accounts`, set `{$INT.AD.DOMAIN}` (e.g. `acme.local`).
 Optional: `{$INT.AD.LDAPS.CHECK}=0`, `{$INT.AD.GROUP.HIGH:"Domain Admins"}=1` if the customer wants Domain Admins changes as HIGH.
 
 ## 5. Verify
 
 1. On the DC: `zabbix_agent2.exe -c "C:\Program Files\Zabbix Agent 2\zabbix_agent2.conf" -t int.ad.repl` → JSON list of partners;
-   `-t int.ad.pdc` → `{"pdc":1,...}` on the PDC emulator, `{"pdc":0}` elsewhere.
+   `-t int.ad.pdc` → `{"pdc":1,...}` on the PDC emulator, `{"pdc":0}` elsewhere;
+   `-t "int.ad.accounts[14,INT Service Accounts]"` → `{"pdc":1,"svc_total":N,...}` on the PDC emulator.
 2. Latest data: 7 `DC service ...` items = Running; `Replication <partner> ...` items per partner and naming context; `SYSVOL DFS-R state` = Normal;
    `Last AD backup age` matches `repadmin /showbackup`.
 3. Group test (with the customer's approval): add a test user to `Backup Operators` → within 15 min AVERAGE "Membership of Backup Operators changed".

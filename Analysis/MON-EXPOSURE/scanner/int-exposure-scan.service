@@ -1,0 +1,9 @@
+[Unit]
+Description=Integrit MON-EXPOSURE weekly external scan
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/integrit/int-exposure-scan.py
+Nice=10

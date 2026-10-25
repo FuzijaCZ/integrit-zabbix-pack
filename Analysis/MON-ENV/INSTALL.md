@@ -101,3 +101,28 @@ A temperature rise together with MON-UPS "on battery" is expected (HVAC is rarel
 3. Contact test: open the rack door → `Door <label>` = ALARM; after 15 min the INFO problem (WARNING outside working hours). Wet the flood
    sensor with a damp cloth → DISASTER "Water detected" within 1 min. Tell the on-call engineer before testing.
 4. Unplug the unit's LAN → after 5 min AVERAGE "Sensor unit ... not responding"; the per-sensor "no data" problems stay suppressed.
+
+## 6. Add-on: rack PDUs (`template_int_mon_env_pdu.yaml`)
+
+| Template | For | Triggers |
+|---|---|---|
+| `INT MON-ENV APC Rack PDU` | APC / Schneider metered / switched rack PDUs (AP7xxx, AP8xxx, PowerNet-MIB rPDU2) | phase / bank **overload** HIGH, **near overload** AVERAGE (thresholds configured on the PDU), PDU not responding AVERAGE |
+| `INT MON-ENV PDU generic` | any SNMP PDU (Eaton, Raritan, Vertiv, ...) | current per label > `{$INT.PDU.CURRENT.WARN}` (8 A) AVERAGE / > `{$INT.PDU.CURRENT.CRIT}` (14 A) HIGH for 5 min |
+
+Items for the report: current per phase / bank, voltage, power (kW), energy counter (kWh, 400 days history: monthly consumption).
+A/B power rule: on redundant feeds each PDU must stay below half of its circuit rating, so that one side can carry everything when
+the other fails. Set the near-overload threshold on the APC PDU (web UI → Configuration → Device / Phase / Bank) accordingly.
+
+Import: same boxes as step 3 (the file uses the same template group `Templates/Integrit/MON-ENV`).
+
+Host: one per PDU, SNMP interface (v3 where the card supports it), group `Services/MON-ENV`, link the matching template.
+Generic PDU macro example (find the OIDs with `snmpwalk` as in step 2):
+```
+{$INT.PDU.CURRENTS}  Phase L1|<current OID of phase 1>|0.1;Phase L2|<OID>|0.1;Phase L3|<OID>|0.1
+{$INT.PDU.CURRENT.CRIT:"Phase L1"}  28     (32 A circuit)
+```
+An APC PDU with an environment probe (AP9335T): link both `INT MON-ENV APC Rack PDU` and `INT MON-ENV SNMP sensors` on the same host
+and list the probe OIDs in the sensor macros.
+
+Verify: Latest data → `Phase 1: current` matches the PDU display; `PDU: energy` increases. APC OID columns (rPDU2 phase table
+.26.6.3.1, bank table .26.8.3.1, device table .26.4.3.1) follow PowerNet-MIB; confirm with `snmpwalk` on the first PDU.

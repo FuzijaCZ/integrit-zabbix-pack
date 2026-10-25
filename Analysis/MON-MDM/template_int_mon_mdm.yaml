@@ -1,0 +1,572 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: f8a9d8c1dc8c4707874145b753348904
+      name: Templates/Integrit/MON-MDM
+  templates:
+    - uuid: 422c3c22307c4e74a6127441974ed8ac
+      template: 'INT MON-MDM Intune'
+      name: 'INT MON-MDM Intune'
+      description: |
+        Integrit MON-MDM: Microsoft Intune fleet compliance per tenant (external proxy, Graph, hourly). Counts as items, device
+        lists as text for opdata and the report: non-compliant, not encrypted, inactive, OS below minimum, critical devices,
+        certificate connector health. Linked on the MON-M365 tenant host, same {$MS365.*} credentials. AV / Defender alerts are
+        in MON-EPS, Apple token expiry in MON-CERT, servers in MON-SRV.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-MDM
+      items:
+        - uuid: 96e1a31e431d4bd8940581f8dc45f3f3
+          name: 'Intune devices raw'
+          type: SCRIPT
+          key: int.mdm.get
+          delay: 1h
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          params: |
+            var p = JSON.parse(value);
+            var out = {error: '', optional_errors: ''};
+            var token;
+
+            function request(url, body) {
+                var req = new HttpRequest();
+                if (p.http_proxy && p.http_proxy.indexOf('{$') !== 0) {
+                    req.setProxy(p.http_proxy);
+                }
+                req.addHeader(token ? 'Authorization: Bearer ' + token : 'Content-Type: application/x-www-form-urlencoded');
+                var resp = body ? req.post(url, body) : req.get(url);
+                var st = req.getStatus();
+                if (st < 200 || st >= 300) {
+                    throw 'HTTP ' + st + ' ' + url.replace(/^https:\/\/[^/]+/, '').replace(/\?.*$/, '') + ': ' + String(resp).substring(0, 120);
+                }
+                return JSON.parse(resp);
+            }
+
+            function list(url) {
+                var res = [], n = 0;
+                while (url && n < 50) {
+                    var r = request(url);
+                    res = res.concat(r.value || []);
+                    url = r['@odata.nextLink'];
+                    n++;
+                }
+                return res;
+            }
+
+            function short(arr) {
+                return ((arr.length > 8 ? arr.length + ' devices: ' : '') + arr.slice(0, 8).join(', ')).substring(0, 240);
+            }
+
+            // "10.0.22631.4317" -> 22631 ; "17.5.1" -> 17.5
+            function ver(os, v) {
+                var parts = String(v || '').split('.');
+                if (/^windows/i.test(os)) {
+                    return parseInt(parts[2] || '0', 10);
+                }
+                return parseFloat((parts[0] || '0') + '.' + (parts[1] || '0'));
+            }
+
+            try {
+                ['tenant_id', 'app_id', 'password'].forEach(function (f) {
+                    if (!p[f] || p[f].indexOf('{$') === 0) {
+                        throw 'Parameter ' + f + ' is not set (host macro).';
+                    }
+                });
+                token = request('https://login.microsoftonline.com/' + encodeURIComponent(p.tenant_id) + '/oauth2/v2.0/token',
+                    'grant_type=client_credentials&scope=' + encodeURIComponent('https://graph.microsoft.com/.default') +
+                    '&client_id=' + encodeURIComponent(p.app_id) + '&client_secret=' + encodeURIComponent(p.password)).access_token;
+
+                var devs = list('https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?$top=999&$select=deviceName,operatingSystem,osVersion,' +
+                    'complianceState,isEncrypted,lastSyncDateTime,managedDeviceOwnerType,deviceCategoryDisplayName');
+                var now = Date.now(), d14 = 14 * 86400000, dInact = parseInt(p.inactive_days, 10) * 86400000;
+                var min = {windows: parseFloat(p.win_build_min), ios: parseFloat(p.ios_min), ipados: parseFloat(p.ios_min),
+                    android: parseFloat(p.android_min), macos: parseFloat(p.macos_min)};
+                var critRe = new RegExp(p.critical_category || '^$', 'i');
+                var c = {total: 0, compliant: 0, noncompliant: 0, grace: 0}, unenc = [], inact = [], inact14 = 0, oldos = [], crit = [];
+                devs.forEach(function (d) {
+                    var os = String(d.operatingSystem || '').toLowerCase(), age = now - Date.parse(d.lastSyncDateTime);
+                    var critical = d.deviceCategoryDisplayName && critRe.test(d.deviceCategoryDisplayName);
+                    c.total++;
+                    if (d.complianceState === 'compliant') {
+                        c.compliant++;
+                    }
+                    else if (d.complianceState === 'noncompliant') {
+                        c.noncompliant++;
+                    }
+                    else if (d.complianceState === 'inGracePeriod') {
+                        c.grace++;
+                    }
+                    if ((os === 'windows' || os === 'macos') && d.isEncrypted === false && age < dInact) {
+                        unenc.push(d.deviceName);
+                        if (critical) {
+                            crit.push(d.deviceName + ' not encrypted');
+                        }
+                    }
+                    if (age > d14) {
+                        inact14++;
+                    }
+                    if (age > dInact) {
+                        inact.push(d.deviceName);
+                        if (critical) {
+                            crit.push(d.deviceName + ' inactive');
+                        }
+                    }
+                    if (min.hasOwnProperty(os) && min[os] > 0 && ver(os, d.osVersion) < min[os] && age < dInact) {
+                        oldos.push(d.deviceName + ' ' + d.osVersion);
+                    }
+                });
+                out.total = c.total; out.compliant = c.compliant; out.noncompliant = c.noncompliant; out.grace = c.grace;
+                out.noncompliant_pct = c.total ? Math.round(c.noncompliant * 1000 / c.total) / 10 : 0;
+                out.unencrypted = unenc.length; out.unencrypted_text = short(unenc);
+                out.inactive = inact.length; out.inactive_text = short(inact); out.inactive14 = inact14;
+                out.oldos = oldos.length; out.oldos_text = short(oldos);
+                out.critical = crit.length; out.critical_text = short(crit);
+
+                try {
+                    var bad = list('https://graph.microsoft.com/beta/deviceManagement/ndesConnectors').filter(function (x) {
+                        return x.state !== 'active';
+                    }).map(function (x) { return x.displayName + ' ' + x.state; });
+                    out.connectors_bad = bad.length; out.connectors_text = short(bad);
+                }
+                catch (e) {
+                    out.optional_errors = 'connectors: ' + String(e).substring(0, 150);
+                }
+            }
+            catch (e) {
+                out.error = String(e).substring(0, 500);
+            }
+            return JSON.stringify(out);
+          timeout: 60s
+          parameters:
+            - name: android_min
+              value: '{$INT.MDM.ANDROID.MIN}'
+            - name: app_id
+              value: '{$MS365.APP.ID}'
+            - name: critical_category
+              value: '{$INT.MDM.CRITICAL.CATEGORY}'
+            - name: http_proxy
+              value: '{$MS365.HTTP.PROXY}'
+            - name: inactive_days
+              value: '{$INT.MDM.INACTIVE.DAYS}'
+            - name: ios_min
+              value: '{$INT.MDM.IOS.MIN}'
+            - name: macos_min
+              value: '{$INT.MDM.MACOS.MIN}'
+            - name: password
+              value: '{$MS365.PASSWORD}'
+            - name: tenant_id
+              value: '{$MS365.TENANT.ID}'
+            - name: win_build_min
+              value: '{$INT.MDM.WIN.BUILD.MIN}'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 66d53b36221b4cdb8644ee4a4c6e2acf
+          name: 'Devices: total'
+          type: DEPENDENT
+          key: int.mdm.total
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.total
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mdm.get
+          tags:
+            - tag: component
+              value: devices
+        - uuid: 49414d61752549a59c2a556b030508cd
+          name: 'Devices: compliant'
+          type: DEPENDENT
+          key: int.mdm.compliant
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.compliant
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mdm.get
+          tags:
+            - tag: component
+              value: devices
+        - uuid: 07265b6efb2e4b87ae5d31045f8ff2b4
+          name: 'Devices: in grace period'
+          type: DEPENDENT
+          key: int.mdm.grace
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.grace
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mdm.get
+          tags:
+            - tag: component
+              value: devices
+        - uuid: 548a839b5bce486ab6b8254f2e25fb4b
+          name: 'Devices: non-compliant'
+          type: DEPENDENT
+          key: int.mdm.noncompliant
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.noncompliant
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mdm.get
+          tags:
+            - tag: component
+              value: devices
+          triggers:
+            - uuid: c5b75d869f994a41bb533583b2aebc90
+              expression: 'last(/INT MON-MDM Intune/int.mdm.noncompliant)>{$INT.MDM.NONCOMPLIANT.MAX} or last(/INT MON-MDM Intune/int.mdm.noncompliant.pct)>{$INT.MDM.NONCOMPLIANT.PCT}'
+              name: 'INT: {ITEM.LASTVALUE1} Intune devices are non-compliant ({ITEM.LASTVALUE2} %)'
+              priority: AVERAGE
+              description: 'Devices fail the compliance policies (encryption, OS version, AV, password). Intune → Devices → Compliance. Conditional Access may already block them.'
+              tags:
+                - tag: scope
+                  value: compliance
+        - uuid: 0b6f00319cca4855aa59775dab31355e
+          name: 'Devices: non-compliant share'
+          type: DEPENDENT
+          key: int.mdm.noncompliant.pct
+          delay: '0'
+          value_type: FLOAT
+          units: '%'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.noncompliant_pct
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mdm.get
+          tags:
+            - tag: component
+              value: devices
+        - uuid: 38096e0c328e4962a7a724eb52c85fc3
+          name: 'Devices: not encrypted'
+          type: DEPENDENT
+          key: int.mdm.unencrypted
+          delay: '0'
+          description: 'Windows / macOS devices active in the last {$INT.MDM.INACTIVE.DAYS} days without BitLocker / FileVault.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.unencrypted
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mdm.get
+          tags:
+            - tag: component
+              value: devices
+          triggers:
+            - uuid: 356bd7e1f68645d2b34523def723fb84
+              expression: 'last(/INT MON-MDM Intune/int.mdm.unencrypted)>{$INT.MDM.UNENCRYPTED.MAX} and length(last(/INT MON-MDM Intune/int.mdm.unencrypted.text))>=0'
+              name: 'INT: {ITEM.LASTVALUE1} devices are not encrypted'
+              opdata: '{ITEM.LASTVALUE2}'
+              priority: HIGH
+              description: 'A lost laptop = data leak (GDPR notification). Enable BitLocker / FileVault policy and check escrow of recovery keys.'
+              tags:
+                - tag: scope
+                  value: compliance
+        - uuid: 9ec47c1fc64b44e7b59acbf97b70a842
+          name: 'Devices: not encrypted list'
+          type: DEPENDENT
+          key: int.mdm.unencrypted.text
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.unencrypted_text
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mdm.get
+          tags:
+            - tag: component
+              value: devices
+        - uuid: f7ecb7ecf6a14faa93b6f48235286112
+          name: 'Devices: inactive'
+          type: DEPENDENT
+          key: int.mdm.inactive
+          delay: '0'
+          description: 'Last sync older than {$INT.MDM.INACTIVE.DAYS} days.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.inactive
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mdm.get
+          tags:
+            - tag: component
+              value: devices
+          triggers:
+            - uuid: a3a854aafe92493d924be9e1388e3d76
+              expression: 'last(/INT MON-MDM Intune/int.mdm.inactive)>{$INT.MDM.INACTIVE.MAX} and length(last(/INT MON-MDM Intune/int.mdm.inactive.text))>=0'
+              name: 'INT: {ITEM.LASTVALUE1} Intune devices inactive > {$INT.MDM.INACTIVE.DAYS} days'
+              opdata: '{ITEM.LASTVALUE2}'
+              priority: WARNING
+              description: 'Lost, stored or reinstalled devices: get them back online or retire them (licence and inventory hygiene).'
+              tags:
+                - tag: scope
+                  value: compliance
+        - uuid: 61bb55364e2a420fb27d48916c92817e
+          name: 'Devices: inactive list'
+          type: DEPENDENT
+          key: int.mdm.inactive.text
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.inactive_text
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mdm.get
+          tags:
+            - tag: component
+              value: devices
+        - uuid: 021e2b97c1874a15b252b3a144190fde
+          name: 'Devices: inactive > 14 days'
+          type: DEPENDENT
+          key: int.mdm.inactive14
+          delay: '0'
+          description: 'Report value.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.inactive14
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mdm.get
+          tags:
+            - tag: component
+              value: devices
+        - uuid: 16783f585c524e02a9592fd4dcc795b1
+          name: 'Devices: OS below minimum'
+          type: DEPENDENT
+          key: int.mdm.oldos
+          delay: '0'
+          description: 'Active devices below the minimum OS (Windows build {$INT.MDM.WIN.BUILD.MIN}, iOS {$INT.MDM.IOS.MIN}, Android {$INT.MDM.ANDROID.MIN}, macOS {$INT.MDM.MACOS.MIN}).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.oldos
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mdm.get
+          tags:
+            - tag: component
+              value: devices
+          triggers:
+            - uuid: 8c585b352f864bdbab1c933132ad422a
+              expression: 'last(/INT MON-MDM Intune/int.mdm.oldos)>0 and length(last(/INT MON-MDM Intune/int.mdm.oldos.text))>=0'
+              name: 'INT: {ITEM.LASTVALUE1} devices run an unsupported or outdated OS'
+              opdata: '{ITEM.LASTVALUE2}'
+              priority: WARNING
+              description: 'No security updates (e.g. Windows 10 without ESU, Windows 11 22H2). Upgrade via Windows Update rings / feature update policy.'
+              tags:
+                - tag: scope
+                  value: compliance
+        - uuid: 0a883d8272e241ffab36f5124901dcc3
+          name: 'Devices: OS below minimum list'
+          type: DEPENDENT
+          key: int.mdm.oldos.text
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.oldos_text
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mdm.get
+          tags:
+            - tag: component
+              value: devices
+        - uuid: 3b31a3459cf049b6831b02a4eb289b0d
+          name: 'Devices: critical device problems'
+          type: DEPENDENT
+          key: int.mdm.critical
+          delay: '0'
+          description: 'Devices in category {$INT.MDM.CRITICAL.CATEGORY} that are not encrypted or inactive.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.critical
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mdm.get
+          tags:
+            - tag: component
+              value: devices
+          triggers:
+            - uuid: 7bc7b9bfee2c468dafa6538a61fc5f84
+              expression: 'last(/INT MON-MDM Intune/int.mdm.critical)>0 and length(last(/INT MON-MDM Intune/int.mdm.critical.text))>=0'
+              name: 'INT: Critical device problem: {ITEM.LASTVALUE2}'
+              priority: HIGH
+              description: 'A device marked critical (category in Intune) is not encrypted or has not synced for {$INT.MDM.INACTIVE.DAYS} days.'
+              tags:
+                - tag: scope
+                  value: compliance
+        - uuid: 43121d600c7d46adab514888320ac6a0
+          name: 'Devices: critical device problems list'
+          type: DEPENDENT
+          key: int.mdm.critical.text
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.critical_text
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mdm.get
+          tags:
+            - tag: component
+              value: devices
+        - uuid: 1547a324b98a4313a746b5ff0c3c93c3
+          name: 'Connectors: not healthy'
+          type: DEPENDENT
+          key: int.mdm.connectors.bad
+          delay: '0'
+          description: 'Intune Certificate / NDES connectors not active (beta API; empty when none is used).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.connectors_bad
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mdm.get
+          tags:
+            - tag: component
+              value: devices
+          triggers:
+            - uuid: 2bf420641a684098a83dddd84ecbc66d
+              expression: 'last(/INT MON-MDM Intune/int.mdm.connectors.bad)>0 and length(last(/INT MON-MDM Intune/int.mdm.connectors.text))>=0'
+              name: 'INT: Intune certificate connector not healthy'
+              opdata: '{ITEM.LASTVALUE2}'
+              priority: HIGH
+              description: 'SCEP / PKCS certificates (Wi-Fi, VPN) stop being issued and renewed. Check the connector server and service.'
+              tags:
+                - tag: scope
+                  value: compliance
+        - uuid: a17e6d1c7e624b23a5d62b41ab7774ec
+          name: 'Connectors: not healthy list'
+          type: DEPENDENT
+          key: int.mdm.connectors.text
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.connectors_text
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mdm.get
+          tags:
+            - tag: component
+              value: devices
+        - uuid: 4bfd197aeb3c4e50be3df01d48cda3fa
+          name: 'Graph: errors'
+          type: DEPENDENT
+          key: int.mdm.error
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.error
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mdm.get
+          tags:
+            - tag: component
+              value: devices
+          triggers:
+            - uuid: 6df3cd74e2b248b3948337a70d830bb1
+              expression: 'length(last(/INT MON-MDM Intune/int.mdm.error,#1))>0 and length(last(/INT MON-MDM Intune/int.mdm.error,#2))>0'
+              name: 'INT: Intune device checks fail'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Token, consent or permission problem (Integrit internal). Text in item "Graph: errors".'
+              tags:
+                - tag: scope
+                  value: monitoring
+            - uuid: ca619b25a2cb455db4aebe495572facc
+              expression: 'nodata(/INT MON-MDM Intune/int.mdm.error,{$INT.MDM.NODATA})=1'
+              name: 'INT: Intune device checks return no data'
+              priority: AVERAGE
+              description: 'Script item times out or the external proxy is down.'
+              tags:
+                - tag: scope
+                  value: monitoring
+        - uuid: c710c13ddc1f46ea8edf909b3ab49f5e
+          name: 'Graph: optional check errors'
+          type: DEPENDENT
+          key: int.mdm.errors.optional
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.optional_errors
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mdm.get
+          tags:
+            - tag: component
+              value: devices
+      tags:
+        - tag: service
+          value: MON-MDM
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.MDM.ANDROID.MIN}'
+          value: '13'
+        - macro: '{$INT.MDM.CRITICAL.CATEGORY}'
+          value: '^Critical$'
+          description: 'Regex of the Intune device category that marks critical devices (management laptops, kiosk PCs).'
+        - macro: '{$INT.MDM.INACTIVE.DAYS}'
+          value: '30'
+        - macro: '{$INT.MDM.INACTIVE.MAX}'
+          value: '5'
+        - macro: '{$INT.MDM.IOS.MIN}'
+          value: '17'
+        - macro: '{$INT.MDM.MACOS.MIN}'
+          value: '14'
+        - macro: '{$INT.MDM.NODATA}'
+          value: 3h
+        - macro: '{$INT.MDM.NONCOMPLIANT.MAX}'
+          value: '5'
+        - macro: '{$INT.MDM.NONCOMPLIANT.PCT}'
+          value: '10'
+        - macro: '{$INT.MDM.UNENCRYPTED.MAX}'
+          value: '0'
+        - macro: '{$INT.MDM.WIN.BUILD.MIN}'
+          value: '26100'
+          description: 'Minimum Windows build. 26100 = Windows 11 24H2 (23H2 = 22631: Home/Pro support ended 2025-11-11, Enterprise ends 2026-11-10). Windows 10 = 19045 (only with ESU).'
+        - macro: '{$MS365.APP.ID}'
+          description: 'Same value as for MON-M365 (set on the tenant host).'
+        - macro: '{$MS365.HTTP.PROXY}'
+        - macro: '{$MS365.PASSWORD}'
+          type: SECRET_TEXT
+          description: 'Same value as for MON-M365 (set on the tenant host).'
+        - macro: '{$MS365.TENANT.ID}'
+          description: 'Same value as for MON-M365 (set on the tenant host).'

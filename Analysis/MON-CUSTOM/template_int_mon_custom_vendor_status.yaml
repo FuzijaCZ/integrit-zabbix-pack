@@ -1,0 +1,142 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: db6e7d0f98b24d149017357f14f7d5d2
+      name: Templates/Integrit/MON-CUSTOM
+  templates:
+    - uuid: 2a0eae28688c4719aede6e9752d31eb7
+      template: 'INT MON-CUSTOM Vendor status pages'
+      name: 'INT MON-CUSTOM Vendor status pages'
+      description: |
+        Integrit MON-CUSTOM add-on: public status pages of SaaS / hosting vendors the customer depends on (Statuspage-compatible
+        /api/v2/status.json: Atlassian, GitHub, Cloudflare, Zoom, Dropbox, many hosters). A vendor incident explains alerts on
+        our side and is a parent for dependencies. Linked on one host per customer (or one Integrit-wide host for common vendors).
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-CUSTOM
+      discovery_rules:
+        - uuid: 68f34045e61d479283bf37f8a53ab760
+          name: 'Vendors from {$INT.CUSTOM.VENDORS}'
+          type: SCRIPT
+          key: int.custom.vendor.discovery
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), names = String(p.fields).split(','), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.replace(/\\\|/g, '\u0001').split('|').map(function (x) { return x.replace(/\u0001/g, '|'); }), row = {};
+                if (f.length !== names.length) {
+                    throw 'Entry "' + entry + '" needs ' + names.length + ' fields separated by |: ' + p.fields;
+                }
+                names.forEach(function (n, i) { row[n.trim()] = f[i].trim(); });
+                out.push(row);
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: fields
+              value: '{#VENDOR},{#URL}'
+            - name: list
+              value: '{$INT.CUSTOM.VENDORS}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Entries vendor|https://status.vendor.com separated by ;.'
+          item_prototypes:
+            - uuid: a13e110438f549aeb8c33b37b741b200
+              name: 'Vendor {#VENDOR}: status raw'
+              type: HTTP_AGENT
+              key: 'int.custom.vendor.raw["{#VENDOR}"]'
+              delay: '{$INT.CUSTOM.VENDOR.INTERVAL}'
+              history: '0'
+              value_type: TEXT
+              trends: '0'
+              timeout: 15s
+              url: '{#URL}/api/v2/status.json'
+              tags:
+                - tag: component
+                  value: raw
+            - uuid: f351f04aa6094fd9bed2d2a042bc489a
+              name: 'Vendor {#VENDOR}: status'
+              type: DEPENDENT
+              key: 'int.custom.vendor.status["{#VENDOR}"]'
+              delay: '0'
+              description: '0 operational, 1 minor, 2 major, 3 critical (Statuspage indicator).'
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - 'return {none: 0, minor: 1, major: 2, critical: 3, maintenance: 0}[JSON.parse(value).status.indicator];'
+              valuemap:
+                name: 'INT CUSTOM vendor status'
+              master_item:
+                key: 'int.custom.vendor.raw["{#VENDOR}"]'
+              tags:
+                - tag: component
+                  value: vendor
+            - uuid: dd82c9966e24411fb45f02e42335efab
+              name: 'Vendor {#VENDOR}: status text'
+              type: DEPENDENT
+              key: 'int.custom.vendor.text["{#VENDOR}"]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.status.description
+              master_item:
+                key: 'int.custom.vendor.raw["{#VENDOR}"]'
+              tags:
+                - tag: component
+                  value: vendor
+          trigger_prototypes:
+            - uuid: bfcb66a145e54d4a805fe2af14810f25
+              expression: 'last(/INT MON-CUSTOM Vendor status pages/int.custom.vendor.status["{#VENDOR}"])>=2 and length(last(/INT MON-CUSTOM Vendor status pages/int.custom.vendor.text["{#VENDOR}"]))>=0'
+              name: 'INT: {#VENDOR} reports a major incident'
+              opdata: '{ITEM.LASTVALUE2}'
+              priority: AVERAGE
+              description: 'Major or critical incident on the vendor status page ({#URL}). Users of the customer are affected; nothing to fix on our side. Inform the customer.'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: a80838016a684fb381f35d9856d6a350
+              expression: 'last(/INT MON-CUSTOM Vendor status pages/int.custom.vendor.status["{#VENDOR}"])=1 and length(last(/INT MON-CUSTOM Vendor status pages/int.custom.vendor.text["{#VENDOR}"]))>=0'
+              name: 'INT: {#VENDOR} reports a minor incident'
+              opdata: '{ITEM.LASTVALUE2}'
+              priority: INFO
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: 5bba0728252b4922ac39183ad0826394
+              expression: 'nodata(/INT MON-CUSTOM Vendor status pages/int.custom.vendor.status["{#VENDOR}"],{$INT.CUSTOM.VENDOR.NODATA})=1'
+              name: 'INT: Status page of {#VENDOR} cannot be read'
+              priority: INFO
+              description: 'URL changed or the page is not Statuspage-compatible ({#URL}/api/v2/status.json).'
+              tags:
+                - tag: scope
+                  value: monitoring
+      tags:
+        - tag: service
+          value: MON-CUSTOM
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.CUSTOM.VENDOR.INTERVAL}'
+          value: 5m
+        - macro: '{$INT.CUSTOM.VENDOR.NODATA}'
+          value: 1h
+        - macro: '{$INT.CUSTOM.VENDORS}'
+          description: 'vendor|https://status.example.com;... (base URL of a Statuspage-compatible page, no trailing slash).'
+      valuemaps:
+        - uuid: ac0cf0e998fc4a1a88089d2bc854b926
+          name: 'INT CUSTOM vendor status'
+          mappings:
+            - value: '0'
+              newvalue: operational
+            - value: '1'
+              newvalue: 'minor incident'
+            - value: '2'
+              newvalue: 'major incident'
+            - value: '3'
+              newvalue: 'critical incident'

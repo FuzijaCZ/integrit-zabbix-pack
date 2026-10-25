@@ -1,0 +1,9 @@
+{
+  "zabbix_api_url": "https://zabbix.integrit.cz/api_jsonrpc.php",
+  "api_token": "<API token of user zbx-exposure, read-only on Customers/*>",
+  "template": "INT MON-EXPOSURE Public IP",
+  "sender_target": "pxy-ext-01.integrit.cz:10051",
+  "sender_args": ["--tls-connect", "psk", "--tls-psk-identity", "INT-EXPOSURE-SCANNER", "--tls-psk-file", "/etc/integrit/exposure.psk"],
+  "tcp_top_ports": 1000,
+  "udp_ports": "161,500,1194,1900,5060,11211"
+}

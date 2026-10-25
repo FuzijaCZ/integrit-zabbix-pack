@@ -1,0 +1,298 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: dd3d0b564b934378b1a6ab45b0f83a06
+      name: Templates/Integrit/MON-PRINT
+  templates:
+    - uuid: ccea1323642a41bc9096a5b76e2b623c
+      template: 'INT MON-PRINT Printer'
+      name: 'INT MON-PRINT Printer'
+      description: |
+        Integrit MON-PRINT generic printer / MFP template over standard MIBs (any vendor, SNMP v2c/v3, site proxy):
+        Printer-MIB (RFC 3805) supplies with LLD and page counter, HOST-RESOURCES-MIB printer status and error bits.
+        No official printer template exists in Zabbix 7.0. Availability alerts only in working hours (printers sleep).
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-PRINT
+      items:
+        - uuid: 4319c6bff48e472db622a91e9d7c8398
+          name: 'Printer: ICMP ping'
+          type: SIMPLE
+          key: icmpping
+          delay: 1m
+          valuemap:
+            name: 'INT PRINT up/down'
+          tags:
+            - tag: component
+              value: printer
+          triggers:
+            - uuid: 6d851d525e4c4427831ddde556839acf
+              expression: 'max(/INT MON-PRINT Printer/icmpping,{$INT.PRINT.DOWN.TIME})=0 and {$INT.TIER.CRITICAL}=1'
+              name: 'INT: Critical printer {HOST.NAME} is unreachable'
+              priority: HIGH
+              description: 'Label / logistics printer (tier critical) does not answer: shipping or production may stop.'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: db49211eecfc4101a7ae6899f10dfd87
+              expression: 'max(/INT MON-PRINT Printer/icmpping,{$INT.PRINT.DOWN.TIME})=0 and (dayofweek()<=5 and time()>={$INT.PRINT.WORK.START} and time()<{$INT.PRINT.WORK.END})'
+              name: 'INT: Printer {HOST.NAME} is unreachable'
+              priority: WARNING
+              description: 'No answer during working hours for {$INT.PRINT.DOWN.TIME} (power, network, deep sleep). Outside working hours not alerted.'
+              dependencies:
+                - name: 'INT: Critical printer {HOST.NAME} is unreachable'
+                  expression: 'max(/INT MON-PRINT Printer/icmpping,{$INT.PRINT.DOWN.TIME})=0 and {$INT.TIER.CRITICAL}=1'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: e35a1e8c33364d32951ed756eb689464
+          name: 'Printer: error state'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.2.1.25.3.5.1.2.1]'
+          key: int.print.errors
+          delay: 1m
+          history: 30d
+          value_type: CHAR
+          trends: '0'
+          description: 'hrPrinterDetectedErrorState decoded. Empty = no condition.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  // hrPrinterDetectedErrorState (RFC 3805 / HOST-RESOURCES-MIB): bit string, first two octets.
+                  var bytes = [];
+                  var v = String(value).trim();
+                  if (/^([0-9A-Fa-f]{2}[ :]?)+$/.test(v) && v.length >= 2) {
+                      v.replace(/[ :]/g, '').match(/.{2}/g).forEach(function (h) { bytes.push(parseInt(h, 16)); });
+                  }
+                  else {
+                      for (var i = 0; i < v.length; i++) { bytes.push(v.charCodeAt(i) & 0xff); }
+                  }
+                  var b0 = bytes[0] || 0, b1 = bytes[1] || 0, names = [];
+                  var map0 = {0x80: 'low paper', 0x40: 'no paper', 0x20: 'low toner', 0x10: 'no toner', 0x08: 'door open', 0x04: 'jammed', 0x02: 'offline', 0x01: 'service requested'};
+                  var map1 = {0x80: 'input tray missing', 0x40: 'output tray missing', 0x20: 'supply missing', 0x10: 'output near full', 0x08: 'output full', 0x04: 'input tray empty', 0x02: 'maintenance overdue'};
+                  Object.keys(map0).forEach(function (k) { if (b0 & k) { names.push(map0[k]); } });
+                  Object.keys(map1).forEach(function (k) { if (b1 & k) { names.push(map1[k]); } });
+                  return names.join(', ');
+          tags:
+            - tag: component
+              value: printer
+          triggers:
+            - uuid: aa12dfaea592442b82fcc5e6ff80cb93
+              expression: 'count(/INT MON-PRINT Printer/int.print.errors,{$INT.PRINT.ERROR.TIME},"regexp","{$INT.PRINT.ERROR.REGEX}")=count(/INT MON-PRINT Printer/int.print.errors,{$INT.PRINT.ERROR.TIME}) and count(/INT MON-PRINT Printer/int.print.errors,{$INT.PRINT.ERROR.TIME})>0 and {$INT.TIER.CRITICAL}=1'
+              name: 'INT: Critical printer {HOST.NAME} has an error: {ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Paper jam, door open, no paper or service needed on a critical printer for {$INT.PRINT.ERROR.TIME}.'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: fc4e977d326e4cf88d6acebda462e75c
+              expression: 'count(/INT MON-PRINT Printer/int.print.errors,{$INT.PRINT.ERROR.TIME},"regexp","{$INT.PRINT.ERROR.REGEX}")=count(/INT MON-PRINT Printer/int.print.errors,{$INT.PRINT.ERROR.TIME}) and count(/INT MON-PRINT Printer/int.print.errors,{$INT.PRINT.ERROR.TIME})>0'
+              name: 'INT: Printer {HOST.NAME} has an error: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Paper jam, door open, no paper or service needed for {$INT.PRINT.ERROR.TIME}.'
+              dependencies:
+                - name: 'INT: Critical printer {HOST.NAME} has an error: {ITEM.LASTVALUE1}'
+                  expression: 'count(/INT MON-PRINT Printer/int.print.errors,{$INT.PRINT.ERROR.TIME},"regexp","{$INT.PRINT.ERROR.REGEX}")=count(/INT MON-PRINT Printer/int.print.errors,{$INT.PRINT.ERROR.TIME}) and count(/INT MON-PRINT Printer/int.print.errors,{$INT.PRINT.ERROR.TIME})>0 and {$INT.TIER.CRITICAL}=1'
+                - name: 'INT: Printer {HOST.NAME} is unreachable'
+                  expression: 'max(/INT MON-PRINT Printer/icmpping,{$INT.PRINT.DOWN.TIME})=0 and (dayofweek()<=5 and time()>={$INT.PRINT.WORK.START} and time()<{$INT.PRINT.WORK.END})'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: dc2e3568c4aa4935872a06890afb98d5
+          name: 'Printer: model / firmware'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.2.1.1.1.0]'
+          key: int.print.sysdescr
+          delay: 1h
+          history: 90d
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: component
+              value: inventory
+        - uuid: de46012d26074465a6d42562c3bd091b
+          name: 'Printer: page counter'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.2.1.43.10.2.1.4.1.1]'
+          key: int.print.pages
+          delay: 1h
+          history: 400d
+          units: pages
+          description: 'prtMarkerLifeCount: total pages printed (monthly report = difference).'
+          tags:
+            - tag: component
+              value: counter
+        - uuid: 0a62b1a18fe6455ebeb239677b354c14
+          name: 'Printer: status'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.2.1.25.3.5.1.1.1]'
+          key: int.print.status
+          delay: 5m
+          valuemap:
+            name: 'INT PRINT status'
+          tags:
+            - tag: component
+              value: printer
+        - uuid: 12be184bc19345858ed37f569c59831c
+          name: 'Printer: supplies walk'
+          type: SNMP_AGENT
+          snmp_oid: 'walk[1.3.6.1.2.1.43.11.1.1.4.1,1.3.6.1.2.1.43.11.1.1.6.1,1.3.6.1.2.1.43.11.1.1.8.1,1.3.6.1.2.1.43.11.1.1.9.1]'
+          key: int.print.supplies.walk
+          delay: 15m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'prtMarkerSuppliesClass, Description, MaxCapacity, Level.'
+          tags:
+            - tag: component
+              value: raw
+      discovery_rules:
+        - uuid: cd39557d264a465e8f2696a270d8a401
+          name: 'Supplies discovery'
+          type: DEPENDENT
+          key: int.print.supplies.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#CLASS}'
+                value: '^3$'
+                formulaid: A
+              - macro: '{#DESC}'
+                value: '{$INT.PRINT.SUPPLY.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: B
+          lifetime: 7d
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Consumed supplies (class 3: toner, ink, drum, fuser...). Waste containers (class 4) are not alerted.'
+          item_prototypes:
+            - uuid: e3dc58e5501843e5b626100ce460108f
+              name: 'Supply {#DESC}: level'
+              type: DEPENDENT
+              key: 'int.print.supply[{#SNMPINDEX}]'
+              delay: '0'
+              units: '%'
+              description: '-3 = some remaining (no percentage reported), -2 = unknown.'
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.2.1.43.11.1.1.9.1.{#SNMPINDEX}'
+                    - '0'
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var l = parseInt(value, 10), m = parseInt('{#MAX}', 10);
+                      if (l < 0 || m <= 0) {
+                          return l;
+                      }
+                      return Math.round(l * 100 / m);
+              master_item:
+                key: int.print.supplies.walk
+              tags:
+                - tag: component
+                  value: supply
+                - tag: supply
+                  value: '{#DESC}'
+          trigger_prototypes:
+            - uuid: e25bd84c5e34490cacf4222f74abbf76
+              expression: 'last(/INT MON-PRINT Printer/int.print.supply[{#SNMPINDEX}])>=0 and last(/INT MON-PRINT Printer/int.print.supply[{#SNMPINDEX}])<={$INT.PRINT.SUPPLY.EMPTY}'
+              name: 'INT: {#DESC} in {HOST.NAME} is empty'
+              priority: AVERAGE
+              description: 'Printing stops or quality fails. Replace now.'
+              tags:
+                - tag: scope
+                  value: capacity
+            - uuid: ac7280538a6c41a69f15a4009c063193
+              expression: 'last(/INT MON-PRINT Printer/int.print.supply[{#SNMPINDEX}])>=0 and last(/INT MON-PRINT Printer/int.print.supply[{#SNMPINDEX}])<{$INT.PRINT.SUPPLY.LOW} and {$INT.PRINT.ORDER.BY.INTEGRIT}=1'
+              name: 'INT: {#DESC} in {HOST.NAME} is low ({ITEM.LASTVALUE1}): order'
+              priority: WARNING
+              description: 'Integrit orders the supplies for this customer: order now.'
+              dependencies:
+                - name: 'INT: {#DESC} in {HOST.NAME} is empty'
+                  expression: 'last(/INT MON-PRINT Printer/int.print.supply[{#SNMPINDEX}])>=0 and last(/INT MON-PRINT Printer/int.print.supply[{#SNMPINDEX}])<={$INT.PRINT.SUPPLY.EMPTY}'
+              tags:
+                - tag: scope
+                  value: capacity
+            - uuid: b57a9dd300cf4fe0837d962e688fb3ff
+              expression: 'last(/INT MON-PRINT Printer/int.print.supply[{#SNMPINDEX}])>=0 and last(/INT MON-PRINT Printer/int.print.supply[{#SNMPINDEX}])<{$INT.PRINT.SUPPLY.LOW} and {$INT.PRINT.ORDER.BY.INTEGRIT}=0'
+              name: 'INT: {#DESC} in {HOST.NAME} is low ({ITEM.LASTVALUE1})'
+              priority: INFO
+              description: 'The customer orders supplies (report / notice only).'
+              dependencies:
+                - name: 'INT: {#DESC} in {HOST.NAME} is empty'
+                  expression: 'last(/INT MON-PRINT Printer/int.print.supply[{#SNMPINDEX}])>=0 and last(/INT MON-PRINT Printer/int.print.supply[{#SNMPINDEX}])<={$INT.PRINT.SUPPLY.EMPTY}'
+              tags:
+                - tag: scope
+                  value: capacity
+          master_item:
+            key: int.print.supplies.walk
+          preprocessing:
+            - type: SNMP_WALK_TO_JSON
+              parameters:
+                - '{#CLASS}'
+                - 1.3.6.1.2.1.43.11.1.1.4.1
+                - '0'
+                - '{#DESC}'
+                - 1.3.6.1.2.1.43.11.1.1.6.1
+                - '0'
+                - '{#MAX}'
+                - 1.3.6.1.2.1.43.11.1.1.8.1
+                - '0'
+      tags:
+        - tag: service
+          value: MON-PRINT
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.PRINT.DOWN.TIME}'
+          value: 30m
+        - macro: '{$INT.PRINT.ERROR.REGEX}'
+          value: '(no paper|door open|jammed|offline|service requested|input tray missing|output tray missing|supply missing|output full|maintenance overdue)'
+          description: 'Error bits that alert (low paper / low toner are handled by the supplies).'
+        - macro: '{$INT.PRINT.ERROR.TIME}'
+          value: 15m
+        - macro: '{$INT.PRINT.ORDER.BY.INTEGRIT}'
+          value: '0'
+          description: '1 = Integrit orders supplies for this customer: low supply = WARNING, else INFO.'
+        - macro: '{$INT.PRINT.SUPPLY.EMPTY}'
+          value: '1'
+        - macro: '{$INT.PRINT.SUPPLY.LOW}'
+          value: '10'
+        - macro: '{$INT.PRINT.SUPPLY.NOT_MATCHES}'
+          value: CHANGE_IF_NEEDED
+          description: 'Supplies not alerted (regex on description, e.g. staples).'
+        - macro: '{$INT.PRINT.WORK.END}'
+          value: '170000'
+        - macro: '{$INT.PRINT.WORK.START}'
+          value: '070000'
+        - macro: '{$INT.TIER.CRITICAL}'
+          value: '0'
+          description: '1 on label / logistics printers (host tag tier=critical): unreachable HIGH at any time, errors AVERAGE.'
+      valuemaps:
+        - uuid: ee3d8b99337b4053ab181330d8ae58a8
+          name: 'INT PRINT status'
+          mappings:
+            - value: '1'
+              newvalue: other
+            - value: '2'
+              newvalue: unknown
+            - value: '3'
+              newvalue: idle
+            - value: '4'
+              newvalue: printing
+            - value: '5'
+              newvalue: warmup
+        - uuid: f68245756d4f4012a30389c3a185c357
+          name: 'INT PRINT up/down'
+          mappings:
+            - value: '0'
+              newvalue: down
+            - value: '1'
+              newvalue: up

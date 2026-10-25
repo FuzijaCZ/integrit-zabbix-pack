@@ -1,0 +1,269 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 79542d52c3674c43b4e7a99f3407a4ba
+      name: Templates/Integrit/MON-CONT
+  templates:
+    - uuid: 031759360f6c49fc89cff0985a5d49e3
+      template: 'INT MON-CONT Docker'
+      name: 'INT MON-CONT Docker'
+      description: |
+        Integrit MON-CONT for Docker hosts (agent 2 ACTIVE, Docker plugin), next to 'INT MON-SRV Linux'. The official
+        'Docker by Zabbix agent 2' uses passive items only, so this template uses the same plugin keys as active checks:
+        daemon responding, containers running / unhealthy / restart loops, counts. The zabbix user needs access to the Docker socket.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-CONT
+      items:
+        - uuid: e2bdd3795f9f4cea811adf90411cfeb5
+          name: 'Docker: ping'
+          type: ZABBIX_ACTIVE
+          key: docker.ping
+          delay: 1m
+          valuemap:
+            name: 'INT CONT up/down'
+          tags:
+            - tag: component
+              value: docker
+          triggers:
+            - uuid: 960b9b365093472a843d861b704b3bb1
+              expression: 'max(/INT MON-CONT Docker/docker.ping,#3)=0'
+              name: 'INT: Docker daemon on {HOST.NAME} is not responding'
+              priority: HIGH
+              description: 'dockerd stopped or the agent cannot reach /var/run/docker.sock (permissions after an upgrade). All containers are affected.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 97861012433949828abcfd43c9c64726
+          name: 'Docker: info raw'
+          type: ZABBIX_ACTIVE
+          key: docker.info
+          delay: 5m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 5970169e519f40d78075c3a72a8605e1
+          name: 'Docker: containers running'
+          type: DEPENDENT
+          key: int.docker.containers.running
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.ContainersRunning
+          master_item:
+            key: docker.info
+          tags:
+            - tag: component
+              value: docker
+        - uuid: 8120cd828b6b4a17aadb7b0a374e359e
+          name: 'Docker: containers stopped'
+          type: DEPENDENT
+          key: int.docker.containers.stopped
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.ContainersStopped
+          master_item:
+            key: docker.info
+          tags:
+            - tag: component
+              value: docker
+        - uuid: 3d2f18a0ee82421faee9df2729070f82
+          name: 'Docker: server version'
+          type: DEPENDENT
+          key: int.docker.version
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.ServerVersion
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          master_item:
+            key: docker.info
+          tags:
+            - tag: component
+              value: docker
+      discovery_rules:
+        - uuid: 3d6ebc074a244e5f8733e4c03e337893
+          name: 'Containers discovery'
+          type: ZABBIX_ACTIVE
+          key: 'docker.containers.discovery[true]'
+          delay: 15m
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#NAME}'
+                value: '{$INT.CONT.NAME.MATCHES}'
+                formulaid: A
+              - macro: '{#NAME}'
+                value: '{$INT.CONT.NAME.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: B
+          lifetime: 7d
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'All containers (running and stopped). One-off / job containers: exclude with {$INT.CONT.NAME.NOT_MATCHES}.'
+          item_prototypes:
+            - uuid: a63c8dd6b2bc4e2d84154749d877b9f3
+              name: 'Container {#NAME}: info raw'
+              type: ZABBIX_ACTIVE
+              key: 'docker.container_info["{#NAME}",full]'
+              delay: 1m
+              history: '0'
+              value_type: TEXT
+              trends: '0'
+              tags:
+                - tag: component
+                  value: raw
+            - uuid: 81b611b2699a43ccbe3f69850373fd9d
+              name: 'Container {#NAME}: running'
+              type: DEPENDENT
+              key: 'int.docker.running["{#NAME}"]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.State.Running'
+                  error_handler: DISCARD_VALUE
+                - type: BOOL_TO_DECIMAL
+                  parameters:
+                    - ''
+              valuemap:
+                name: 'INT CONT yes/no'
+              master_item:
+                key: 'docker.container_info["{#NAME}",full]'
+              tags:
+                - tag: component
+                  value: container
+                - tag: container
+                  value: '{#NAME}'
+            - uuid: f10eeabad15844f288f03ca2e76beb36
+              name: 'Container {#NAME}: health'
+              type: DEPENDENT
+              key: 'int.docker.health["{#NAME}"]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'healthy / unhealthy / starting; empty when the image has no HEALTHCHECK.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.State.Health.Status'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: 'docker.container_info["{#NAME}",full]'
+              tags:
+                - tag: component
+                  value: container
+                - tag: container
+                  value: '{#NAME}'
+            - uuid: 90915305804a402f9d0391917d7f4033
+              name: 'Container {#NAME}: restart count'
+              type: DEPENDENT
+              key: 'int.docker.restarts["{#NAME}"]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.RestartCount'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: 'docker.container_info["{#NAME}",full]'
+              tags:
+                - tag: component
+                  value: container
+                - tag: container
+                  value: '{#NAME}'
+            - uuid: d5ff44d54f444eef9f28674999de1799
+              name: 'Container {#NAME}: exit code'
+              type: DEPENDENT
+              key: 'int.docker.exitcode["{#NAME}"]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.State.ExitCode'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: 'docker.container_info["{#NAME}",full]'
+              tags:
+                - tag: component
+                  value: container
+                - tag: container
+                  value: '{#NAME}'
+          trigger_prototypes:
+            - uuid: a430b03dbf2147e99287c51a7c3a29de
+              expression: 'max(/INT MON-CONT Docker/int.docker.running["{#NAME}"],{$INT.CONT.DOWN.TIME})=0 and {$INT.CONT.EXPECTED:"{#NAME}"}=1'
+              name: 'INT: Container {#NAME} on {HOST.NAME} is not running'
+              priority: AVERAGE
+              description: 'Stopped / exited for {$INT.CONT.DOWN.TIME} (exit code in item). Containers that are stopped on purpose: {$INT.CONT.EXPECTED:"<name>"}=0.'
+              dependencies:
+                - name: 'INT: Docker daemon on {HOST.NAME} is not responding'
+                  expression: 'max(/INT MON-CONT Docker/docker.ping,#3)=0'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: 99be62d4297c412c9684b6090434883e
+              expression: 'count(/INT MON-CONT Docker/int.docker.health["{#NAME}"],{$INT.CONT.DOWN.TIME},"eq","unhealthy")>=2'
+              name: 'INT: Container {#NAME} on {HOST.NAME} is unhealthy'
+              priority: AVERAGE
+              description: 'The image HEALTHCHECK fails (app not answering inside the container).'
+              dependencies:
+                - name: 'INT: Docker daemon on {HOST.NAME} is not responding'
+                  expression: 'max(/INT MON-CONT Docker/docker.ping,#3)=0'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: 79403fbad67b4565bdf746fee4e3b5fa
+              expression: 'last(/INT MON-CONT Docker/int.docker.restarts["{#NAME}"])-min(/INT MON-CONT Docker/int.docker.restarts["{#NAME}"],15m)>{$INT.CONT.RESTARTS.MAX}'
+              name: 'INT: Container {#NAME} on {HOST.NAME} is in a restart loop'
+              priority: HIGH
+              description: 'More than {$INT.CONT.RESTARTS.MAX} restarts in 15 min: the application crashes at start (config, dependency, out of memory).'
+              dependencies:
+                - name: 'INT: Docker daemon on {HOST.NAME} is not responding'
+                  expression: 'max(/INT MON-CONT Docker/docker.ping,#3)=0'
+              tags:
+                - tag: scope
+                  value: availability
+      tags:
+        - tag: service
+          value: MON-CONT
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.CONT.DOWN.TIME}'
+          value: 5m
+        - macro: '{$INT.CONT.EXPECTED}'
+          value: '1'
+          description: 'Per container with context: {$INT.CONT.EXPECTED:"backup-job"}=0 = may be stopped.'
+        - macro: '{$INT.CONT.NAME.MATCHES}'
+          value: '.*'
+        - macro: '{$INT.CONT.NAME.NOT_MATCHES}'
+          value: CHANGE_IF_NEEDED
+        - macro: '{$INT.CONT.RESTARTS.MAX}'
+          value: '3'
+      valuemaps:
+        - uuid: 2359cdc6d1cb48d3bbe2771c2fee7f1e
+          name: 'INT CONT up/down'
+          mappings:
+            - value: '0'
+              newvalue: down
+            - value: '1'
+              newvalue: up
+        - uuid: 27d3fa49fb6c4d9e8d1546a5715ce2ec
+          name: 'INT CONT yes/no'
+          mappings:
+            - value: '0'
+              newvalue: 'no'
+            - value: '1'
+              newvalue: 'yes'

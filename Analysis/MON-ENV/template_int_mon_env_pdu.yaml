@@ -1,0 +1,419 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 289a597e28be400da3c3039f35facc80
+      name: Templates/Integrit/MON-ENV
+  templates:
+    - uuid: c754714e981a449190b22649347bb20d
+      template: 'INT MON-ENV APC Rack PDU'
+      name: 'INT MON-ENV APC Rack PDU'
+      description: |
+        Integrit MON-ENV add-on for APC / Schneider metered and switched rack PDUs (AP7xxx / AP8xxx, PowerNet-MIB rPDU2, SNMP, site
+        proxy): load state of each phase and bank against the thresholds configured on the PDU, current, voltage, power, energy.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-ENV
+      items:
+        - uuid: 7f7bb11b44a348c8ab00245629333b2a
+          name: 'PDU: uptime'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.2.1.1.3.0]'
+          key: int.pdu.uptime
+          delay: 1m
+          history: 7d
+          units: uptime
+          preprocessing:
+            - type: MULTIPLIER
+              parameters:
+                - '0.01'
+          tags:
+            - tag: component
+              value: pdu
+          triggers:
+            - uuid: e903faec161246e8870882ee52230d7e
+              expression: 'nodata(/INT MON-ENV APC Rack PDU/int.pdu.uptime,{$INT.PDU.DOWN.TIME})=1'
+              name: 'INT: PDU {HOST.NAME} is not responding to SNMP'
+              priority: AVERAGE
+              description: 'PDU management card offline (network, card hang). The PDU may still power the rack; load is unknown.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: bd2bb25a04f54a6cb2d305e1e4494fc4
+          name: 'PDU: device power'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.318.1.1.26.4.3.1.5.1]'
+          key: int.pdu.power
+          delay: 5m
+          value_type: FLOAT
+          units: kW
+          preprocessing:
+            - type: MULTIPLIER
+              parameters:
+                - '0.01'
+          tags:
+            - tag: component
+              value: pdu
+        - uuid: be78b4bfa7a6441ea2d905eec4d8f456
+          name: 'PDU: energy'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.318.1.1.26.4.3.1.9.1]'
+          key: int.pdu.energy
+          delay: 1h
+          history: 400d
+          value_type: FLOAT
+          units: kWh
+          description: 'Energy counter (monthly report: consumption of the rack).'
+          preprocessing:
+            - type: MULTIPLIER
+              parameters:
+                - '0.1'
+          tags:
+            - tag: component
+              value: pdu
+        - uuid: ff41eca22807449bad79fe89ef0682be
+          name: 'PDU: phase and bank walk'
+          type: SNMP_AGENT
+          snmp_oid: 'walk[1.3.6.1.4.1.318.1.1.26.6.3.1.3,1.3.6.1.4.1.318.1.1.26.6.3.1.4,1.3.6.1.4.1.318.1.1.26.6.3.1.5,1.3.6.1.4.1.318.1.1.26.6.3.1.6,1.3.6.1.4.1.318.1.1.26.6.3.1.7,1.3.6.1.4.1.318.1.1.26.8.3.1.3,1.3.6.1.4.1.318.1.1.26.8.3.1.4,1.3.6.1.4.1.318.1.1.26.8.3.1.5]'
+          key: int.pdu.walk
+          delay: 1m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          tags:
+            - tag: component
+              value: raw
+      discovery_rules:
+        - uuid: e71b28e3d3f5470d87637aaf7f78689a
+          name: 'Phases discovery'
+          type: DEPENDENT
+          key: int.pdu.phase.discovery
+          delay: '0'
+          lifetime: 7d
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: 5177c22f5b3b481cb4cf1ee54ce534c2
+              name: 'Phase {#NUMBER}: load state'
+              type: DEPENDENT
+              key: 'int.pdu.phase.state[{#SNMPINDEX}]'
+              delay: '0'
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.4.1.318.1.1.26.6.3.1.4.{#SNMPINDEX}'
+                    - '0'
+              valuemap:
+                name: 'INT PDU load state'
+              master_item:
+                key: int.pdu.walk
+              tags:
+                - tag: component
+                  value: pdu
+            - uuid: d17dccb2f22248ccac5e40cd63dfb8b8
+              name: 'Phase {#NUMBER}: current'
+              type: DEPENDENT
+              key: 'int.pdu.phase.current[{#SNMPINDEX}]'
+              delay: '0'
+              value_type: FLOAT
+              units: 'A'
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.4.1.318.1.1.26.6.3.1.5.{#SNMPINDEX}'
+                    - '0'
+                - type: MULTIPLIER
+                  parameters:
+                    - '0.1'
+              master_item:
+                key: int.pdu.walk
+              tags:
+                - tag: component
+                  value: pdu
+            - uuid: 9330f68e701448ac863db09f4cf84034
+              name: 'Phase {#NUMBER}: voltage'
+              type: DEPENDENT
+              key: 'int.pdu.phase.voltage[{#SNMPINDEX}]'
+              delay: '0'
+              units: 'V'
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.4.1.318.1.1.26.6.3.1.6.{#SNMPINDEX}'
+                    - '0'
+              master_item:
+                key: int.pdu.walk
+              tags:
+                - tag: component
+                  value: pdu
+            - uuid: e5d491664c7d49c8ac20b747c949ea0a
+              name: 'Phase {#NUMBER}: power'
+              type: DEPENDENT
+              key: 'int.pdu.phase.power[{#SNMPINDEX}]'
+              delay: '0'
+              value_type: FLOAT
+              units: 'kW'
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.4.1.318.1.1.26.6.3.1.7.{#SNMPINDEX}'
+                    - '0'
+                - type: MULTIPLIER
+                  parameters:
+                    - '0.01'
+              master_item:
+                key: int.pdu.walk
+              tags:
+                - tag: component
+                  value: pdu
+          trigger_prototypes:
+            - uuid: ae00928eb9a54ade84ee8e7fa6dfa7f7
+              expression: 'min(/INT MON-ENV APC Rack PDU/int.pdu.phase.state[{#SNMPINDEX}],#2)=4'
+              name: 'INT: PDU {HOST.NAME} phase {#NUMBER} is overloaded'
+              priority: HIGH
+              description: 'Current above the overload threshold set on the PDU: the breaker may trip and switch off every device on it. Move load to the other PDU / phase now.'
+              dependencies:
+                - name: 'INT: PDU {HOST.NAME} is not responding to SNMP'
+                  expression: 'nodata(/INT MON-ENV APC Rack PDU/int.pdu.uptime,{$INT.PDU.DOWN.TIME})=1'
+              tags:
+                - tag: scope
+                  value: capacity
+            - uuid: 52c47e0913ec493cb8eac7d374a9403f
+              expression: 'min(/INT MON-ENV APC Rack PDU/int.pdu.phase.state[{#SNMPINDEX}],#2)=3'
+              name: 'INT: PDU {HOST.NAME} phase {#NUMBER} is near overload'
+              priority: AVERAGE
+              description: 'Above the near-overload threshold of the PDU. With A/B feeds: if one side fails, the other carries everything and trips.'
+              dependencies:
+                - name: 'INT: PDU {HOST.NAME} phase {#NUMBER} is overloaded'
+                  expression: 'min(/INT MON-ENV APC Rack PDU/int.pdu.phase.state[{#SNMPINDEX}],#2)=4'
+                - name: 'INT: PDU {HOST.NAME} is not responding to SNMP'
+                  expression: 'nodata(/INT MON-ENV APC Rack PDU/int.pdu.uptime,{$INT.PDU.DOWN.TIME})=1'
+              tags:
+                - tag: scope
+                  value: capacity
+          master_item:
+            key: int.pdu.walk
+          preprocessing:
+            - type: SNMP_WALK_TO_JSON
+              parameters:
+                - '{#NUMBER}'
+                - 1.3.6.1.4.1.318.1.1.26.6.3.1.3
+                - '0'
+        - uuid: df78f0de476d4b6c89fbac0d0cdd1957
+          name: 'Banks discovery'
+          type: DEPENDENT
+          key: int.pdu.bank.discovery
+          delay: '0'
+          lifetime: 7d
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: 9409772f5c984420b3bced923cceec04
+              name: 'Bank {#NUMBER}: load state'
+              type: DEPENDENT
+              key: 'int.pdu.bank.state[{#SNMPINDEX}]'
+              delay: '0'
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.4.1.318.1.1.26.8.3.1.4.{#SNMPINDEX}'
+                    - '0'
+              valuemap:
+                name: 'INT PDU load state'
+              master_item:
+                key: int.pdu.walk
+              tags:
+                - tag: component
+                  value: pdu
+            - uuid: 78008a322af84c6a9a4584f216fbe2e6
+              name: 'Bank {#NUMBER}: current'
+              type: DEPENDENT
+              key: 'int.pdu.bank.current[{#SNMPINDEX}]'
+              delay: '0'
+              value_type: FLOAT
+              units: 'A'
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.4.1.318.1.1.26.8.3.1.5.{#SNMPINDEX}'
+                    - '0'
+                - type: MULTIPLIER
+                  parameters:
+                    - '0.1'
+              master_item:
+                key: int.pdu.walk
+              tags:
+                - tag: component
+                  value: pdu
+          trigger_prototypes:
+            - uuid: bf44c5c2d1944dfda0c38d7de0004424
+              expression: 'min(/INT MON-ENV APC Rack PDU/int.pdu.bank.state[{#SNMPINDEX}],#2)=4'
+              name: 'INT: PDU {HOST.NAME} bank {#NUMBER} is overloaded'
+              priority: HIGH
+              description: 'Current above the overload threshold set on the PDU: the breaker may trip and switch off every device on it. Move load to the other PDU / phase now.'
+              dependencies:
+                - name: 'INT: PDU {HOST.NAME} is not responding to SNMP'
+                  expression: 'nodata(/INT MON-ENV APC Rack PDU/int.pdu.uptime,{$INT.PDU.DOWN.TIME})=1'
+              tags:
+                - tag: scope
+                  value: capacity
+            - uuid: 661d470d980b4032b25da1435a905b42
+              expression: 'min(/INT MON-ENV APC Rack PDU/int.pdu.bank.state[{#SNMPINDEX}],#2)=3'
+              name: 'INT: PDU {HOST.NAME} bank {#NUMBER} is near overload'
+              priority: AVERAGE
+              description: 'Above the near-overload threshold of the PDU. With A/B feeds: if one side fails, the other carries everything and trips.'
+              dependencies:
+                - name: 'INT: PDU {HOST.NAME} bank {#NUMBER} is overloaded'
+                  expression: 'min(/INT MON-ENV APC Rack PDU/int.pdu.bank.state[{#SNMPINDEX}],#2)=4'
+                - name: 'INT: PDU {HOST.NAME} is not responding to SNMP'
+                  expression: 'nodata(/INT MON-ENV APC Rack PDU/int.pdu.uptime,{$INT.PDU.DOWN.TIME})=1'
+              tags:
+                - tag: scope
+                  value: capacity
+          master_item:
+            key: int.pdu.walk
+          preprocessing:
+            - type: SNMP_WALK_TO_JSON
+              parameters:
+                - '{#NUMBER}'
+                - 1.3.6.1.4.1.318.1.1.26.8.3.1.3
+                - '0'
+      tags:
+        - tag: service
+          value: MON-ENV
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.PDU.DOWN.TIME}'
+          value: 5m
+      valuemaps:
+        - uuid: 37f09e963b1b46688bcaade1477b49d1
+          name: 'INT PDU load state'
+          mappings:
+            - value: '1'
+              newvalue: 'low load'
+            - value: '2'
+              newvalue: normal
+            - value: '3'
+              newvalue: 'near overload'
+            - value: '4'
+              newvalue: overload
+    - uuid: c6e710aa7f29479a974678fb896a9490
+      template: 'INT MON-ENV PDU generic'
+      name: 'INT MON-ENV PDU generic'
+      description: |
+        Integrit MON-ENV add-on for any SNMP PDU (Eaton, Raritan, Vertiv, Lindy, ...): current per phase / bank / outlet from a host
+        macro list label|OID|multiplier, with warning and critical amps per label (macro context). Same idea as the generic sensors.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-ENV
+      items:
+        - uuid: d185f7c02e7b4c9a964d3a4ee92c3b84
+          name: 'PDU: uptime'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.2.1.1.3.0]'
+          key: int.pdu.uptime
+          delay: 1m
+          history: 7d
+          units: uptime
+          preprocessing:
+            - type: MULTIPLIER
+              parameters:
+                - '0.01'
+          tags:
+            - tag: component
+              value: pdu
+          triggers:
+            - uuid: 53ae45b818034a70abc641ac0f79be38
+              expression: 'nodata(/INT MON-ENV PDU generic/int.pdu.uptime,{$INT.PDU.DOWN.TIME})=1'
+              name: 'INT: PDU {HOST.NAME} is not responding to SNMP'
+              priority: AVERAGE
+              description: 'PDU management card offline. Load is unknown.'
+              tags:
+                - tag: scope
+                  value: availability
+      discovery_rules:
+        - uuid: 8ec10b44e23d4c288d552c81ed84af6e
+          name: 'PDU currents from {$INT.PDU.CURRENTS}'
+          type: SCRIPT
+          key: int.pdu.generic.discovery
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), names = String(p.fields).split(','), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.replace(/\\\|/g, '\u0001').split('|').map(function (x) { return x.replace(/\u0001/g, '|'); }), row = {};
+                if (f.length !== names.length) {
+                    throw 'Entry "' + entry + '" needs ' + names.length + ' fields separated by |: ' + p.fields;
+                }
+                names.forEach(function (n, i) { row[n.trim()] = f[i].trim(); });
+                out.push(row);
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: fields
+              value: '{#LABEL},{#OID},{#MULT}'
+            - name: list
+              value: '{$INT.PDU.CURRENTS}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Entries label|OID|multiplier separated by ; (e.g. Phase L1|<OID>|0.1).'
+          item_prototypes:
+            - uuid: 3ff78223e6a54d6bbeffb84dbefbd519
+              name: 'PDU {#LABEL}: current'
+              type: SNMP_AGENT
+              snmp_oid: '{#OID}'
+              key: 'int.pdu.generic.current["{#LABEL}"]'
+              delay: 1m
+              value_type: FLOAT
+              units: A
+              preprocessing:
+                - type: MULTIPLIER
+                  parameters:
+                    - '{#MULT}'
+              tags:
+                - tag: component
+                  value: pdu
+          trigger_prototypes:
+            - uuid: 311040a72ee94cf6a6cb201950e281b7
+              expression: 'min(/INT MON-ENV PDU generic/int.pdu.generic.current["{#LABEL}"],5m)>{$INT.PDU.CURRENT.CRIT:"{#LABEL}"}'
+              name: 'INT: PDU {HOST.NAME} {#LABEL} current {ITEM.LASTVALUE1} is critical'
+              priority: HIGH
+              description: 'Above {$INT.PDU.CURRENT.CRIT:"{#LABEL}"} A for 5 min: the breaker may trip.'
+              dependencies:
+                - name: 'INT: PDU {HOST.NAME} is not responding to SNMP'
+                  expression: 'nodata(/INT MON-ENV PDU generic/int.pdu.uptime,{$INT.PDU.DOWN.TIME})=1'
+              tags:
+                - tag: scope
+                  value: capacity
+            - uuid: a908888c2e22494eaec0ca227685b43c
+              expression: 'min(/INT MON-ENV PDU generic/int.pdu.generic.current["{#LABEL}"],5m)>{$INT.PDU.CURRENT.WARN:"{#LABEL}"}'
+              name: 'INT: PDU {HOST.NAME} {#LABEL} current {ITEM.LASTVALUE1} is high'
+              priority: AVERAGE
+              description: 'Above {$INT.PDU.CURRENT.WARN:"{#LABEL}"} A for 5 min. With A/B feeds each side must carry the whole load alone.'
+              dependencies:
+                - name: 'INT: PDU {HOST.NAME} {#LABEL} current {ITEM.LASTVALUE1} is critical'
+                  expression: 'min(/INT MON-ENV PDU generic/int.pdu.generic.current["{#LABEL}"],5m)>{$INT.PDU.CURRENT.CRIT:"{#LABEL}"}'
+                - name: 'INT: PDU {HOST.NAME} is not responding to SNMP'
+                  expression: 'nodata(/INT MON-ENV PDU generic/int.pdu.uptime,{$INT.PDU.DOWN.TIME})=1'
+              tags:
+                - tag: scope
+                  value: capacity
+      tags:
+        - tag: service
+          value: MON-ENV
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.PDU.CURRENT.CRIT}'
+          value: '14'
+          description: 'Amps, per label with context. 16 A circuit: 14 critical.'
+        - macro: '{$INT.PDU.CURRENT.WARN}'
+          value: '8'
+          description: 'Amps, per label. 8 A = half of a 16 A circuit (A/B redundancy rule).'
+        - macro: '{$INT.PDU.CURRENTS}'
+          description: 'label|OID|multiplier;... Empty = none.'
+        - macro: '{$INT.PDU.DOWN.TIME}'
+          value: 5m

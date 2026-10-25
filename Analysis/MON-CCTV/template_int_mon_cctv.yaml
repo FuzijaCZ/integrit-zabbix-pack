@@ -1,0 +1,570 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 3fd5140560f444bc9d18699e92f72428
+      name: Templates/Integrit/MON-CCTV
+  templates:
+    - uuid: 45b686f78cba406caecbbf556c744e4f
+      template: 'INT MON-CCTV Generic cameras'
+      name: 'INT MON-CCTV Generic cameras'
+      description: |
+        Integrit MON-CCTV fallback for IP cameras of any brand reachable from the site proxy (camera VLAN): ICMP and RTSP port per
+        camera from a host macro list. Linked on the recorder / VMS host (or a per-site camera host).
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-CCTV
+      discovery_rules:
+        - uuid: 803449fa7fd7461f9c653311c5c965d7
+          name: 'Cameras from {$INT.CCTV.CAMERAS}'
+          type: SCRIPT
+          key: int.cctv.cameras.discovery
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), names = String(p.fields).split(','), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.replace(/\\\|/g, '\u0001').split('|').map(function (x) { return x.replace(/\u0001/g, '|'); }), row = {};
+                if (f.length !== names.length) {
+                    throw 'Entry "' + entry + '" needs ' + names.length + ' fields separated by |: ' + p.fields;
+                }
+                names.forEach(function (n, i) { row[n.trim()] = f[i].trim(); });
+                out.push(row);
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: fields
+              value: '{#CAMERA},{#IP}'
+            - name: list
+              value: '{$INT.CCTV.CAMERAS}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Entries label|IP separated by ;.'
+          item_prototypes:
+            - uuid: 7aed2ffc28b143ce9444329bc5b1883c
+              name: 'Camera {#CAMERA}: ICMP ping'
+              type: SIMPLE
+              key: 'icmpping[{#IP}]'
+              delay: 1m
+              valuemap:
+                name: 'INT CCTV camera up/down'
+              tags:
+                - tag: component
+                  value: camera
+            - uuid: bbc762de51ed43f9b4602966b10aeadb
+              name: 'Camera {#CAMERA}: RTSP port'
+              type: SIMPLE
+              key: 'net.tcp.service[tcp,{#IP},{$INT.CCTV.RTSP.PORT}]'
+              delay: 1m
+              valuemap:
+                name: 'INT CCTV camera up/down'
+              tags:
+                - tag: component
+                  value: camera
+          trigger_prototypes:
+            - uuid: 1696284e55434ba69fd4be355549dadd
+              expression: 'max(/INT MON-CCTV Generic cameras/net.tcp.service[tcp,{#IP},{$INT.CCTV.RTSP.PORT}],{$INT.CCTV.OFFLINE.TIME})=0 and max(/INT MON-CCTV Generic cameras/icmpping[{#IP}],{$INT.CCTV.OFFLINE.TIME})=0'
+              name: 'INT: Camera {#CAMERA} ({#IP}) is offline'
+              priority: AVERAGE
+              description: 'Neither ping nor RTSP answers for {$INT.CCTV.OFFLINE.TIME}: power / PoE port, cable or camera. Check the PoE switch port (MON-LAN).'
+              tags:
+                - tag: scope
+                  value: availability
+      tags:
+        - tag: service
+          value: MON-CCTV
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.CCTV.CAMERAS}'
+          description: 'label|IP;... e.g. Entrance|10.0.50.21;Parking|10.0.50.22'
+        - macro: '{$INT.CCTV.OFFLINE.TIME}'
+          value: 10m
+        - macro: '{$INT.CCTV.RTSP.PORT}'
+          value: '554'
+      valuemaps:
+        - uuid: 80fdce478b824c96a193cc982e634aca
+          name: 'INT CCTV camera up/down'
+          mappings:
+            - value: '0'
+              newvalue: down
+            - value: '1'
+              newvalue: up
+    - uuid: eef1e0e64226450eb6d518ed8544dbb9
+      template: 'INT MON-CCTV Hikvision camera'
+      name: 'INT MON-CCTV Hikvision camera'
+      description: |
+        Integrit MON-CCTV for one important Hikvision camera (optional per-camera host): official 'Hikvision camera by HTTP'
+        (ISAPI: device info, CPU / memory, streams, restarts, firmware). Set {$HIKVISION_ISAPI_HOST}, {$USER}, {$PASSWORD} on the host.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'Hikvision camera by HTTP'
+      groups:
+        - name: Templates/Integrit/MON-CCTV
+      tags:
+        - tag: service
+          value: MON-CCTV
+        - tag: version
+          value: '1.0'
+    - uuid: c8877731ad7342e182d96a73cfa2a39c
+      template: 'INT MON-CCTV Hikvision NVR'
+      name: 'INT MON-CCTV Hikvision NVR'
+      description: |
+        Integrit MON-CCTV for a Hikvision NVR / DVR (site proxy, ISAPI over HTTP(S) with digest auth, read-only user).
+        Recorder reachable, disk status, camera channels online, recording in the last window per channel, retention (oldest
+        recording) vs agreed days, clock offset, firmware. Not a security / alarm service.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-CCTV
+      items:
+        - uuid: 23d25e7b5e0b493ca8b0e8809bfa5ef2
+          name: 'Recorder: ICMP ping'
+          type: SIMPLE
+          key: icmpping
+          delay: 1m
+          valuemap:
+            name: 'INT CCTV yes/no'
+          tags:
+            - tag: component
+              value: nvr
+          triggers:
+            - uuid: 1cb9e2bfec6b422a854c4b2e4f886f4c
+              expression: 'max(/INT MON-CCTV Hikvision NVR/icmpping,{$INT.CCTV.RECORDER.DOWN.TIME})=0'
+              name: 'INT: Recorder {HOST.NAME} is unreachable'
+              priority: HIGH
+              description: 'No recording can be checked and probably none is made (power, network, NVR hang). Depends on the site gateway / PoE switch (host-level).'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: f1be0b4d0c6840538937e4d00a4ffa6f
+          name: 'Recorder: ISAPI raw'
+          type: SCRIPT
+          key: int.cctv.hik.get
+          delay: '{$INT.CCTV.INTERVAL}'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          params: |
+            var p = JSON.parse(value);
+            var base = p.scheme + '://' + p.host + ':' + p.port + '/ISAPI';
+            var out = {error: '', channels: [], hdds: []};
+
+            function isapi(method, path, body) {
+                var req = new HttpRequest();
+                req.setHttpAuth(HTTPAUTH_DIGEST, p.user, p.password);
+                req.addHeader('Content-Type: application/xml');
+                var resp = method === 'POST' ? req.post(base + path, body) : req.get(base + path);
+                var st = req.getStatus();
+                if (st === 401) {
+                    throw 'ISAPI ' + path + ': authentication failed (user / password / ISAPI digest)';
+                }
+                if (st !== 200) {
+                    throw 'ISAPI ' + path + ': HTTP ' + st;
+                }
+                return JSON.parse(XML.toJson(resp));
+            }
+
+            function arr(x) {
+                return x === undefined || x === null ? [] : (Array.isArray(x) ? x : [x]);
+            }
+
+            function iso(t) {
+                return new Date(t).toISOString().replace(/\.\d+Z$/, 'Z');
+            }
+
+            // Earliest (asc) or any match of a track in a time span; returns the startTime string or ''.
+            function search(track, from, to) {
+                var r = isapi('POST', '/ContentMgmt/search', '<?xml version="1.0" encoding="UTF-8"?><CMSearchDescription>' +
+                    '<searchID>' + 'C' + Date.now() + track + '</searchID><trackIDList><trackID>' + track + '</trackID></trackIDList>' +
+                    '<timeSpanList><timeSpan><startTime>' + iso(from) + '</startTime><endTime>' + iso(to) + '</endTime></timeSpan></timeSpanList>' +
+                    '<maxResults>1</maxResults><searchResultPostion>0</searchResultPostion>' +
+                    '<metadataList><metadataDescriptor>//recordType.meta.std-cgi.com</metadataDescriptor></metadataList></CMSearchDescription>');
+                var res = r.CMSearchResult || {};
+                var item = arr((res.matchList || {}).searchMatchItem)[0];
+                return item && item.timeSpan ? String(item.timeSpan.startTime) : '';
+            }
+
+            try {
+                if (!p.password || p.password.indexOf('{$') === 0) {
+                    throw 'Macro {$INT.CCTV.PASSWORD} is not set.';
+                }
+                var now = Date.now();
+                var info = isapi('GET', '/System/deviceInfo').DeviceInfo || {};
+                out.model = String(info.model || '');
+                out.firmware = String(info.firmwareVersion || '') + ' ' + String(info.firmwareReleasedDate || '');
+
+                var t = (isapi('GET', '/System/time').Time || {}).localTime;
+                out.time_offset = t ? Math.round((Date.parse(String(t)) - now) / 1000) : null;
+
+                arr(((isapi('GET', '/ContentMgmt/Storage').storage || {}).hddList || {}).hdd).forEach(function (h) {
+                    var cap = parseFloat(h.capacity) || 0, free = parseFloat(h.freeSpace) || 0;
+                    out.hdds.push({id: String(h.id), name: String(h.hddName || ('hdd' + h.id)), status: String(h.status || ''),
+                        ok: String(h.status).toLowerCase() === 'ok' ? 1 : 0, capacity_gb: Math.round(cap / 1024)});
+                });
+
+                var win = parseInt(p.record_window_min, 10) * 60000;
+                arr((isapi('GET', '/ContentMgmt/InputProxy/channels/status').InputProxyChannelStatusList || {}).InputProxyChannelStatus).forEach(function (c) {
+                    var id = parseInt(c.id, 10), track = id * 100 + 1;
+                    var ch = {id: String(id), online: String(c.online) === 'true' ? 1 : 0, recorded: -1};
+                    try {
+                        ch.recorded = search(track, now - win, now) ? 1 : 0;
+                    }
+                    catch (e) {
+                        ch.recorded = -1;
+                    }
+                    out.channels.push(ch);
+                });
+
+                var first = search(parseInt(p.retention_track, 10), Date.parse('2000-01-01T00:00:00Z'), now);
+                out.retention_days = first ? Math.floor((now - Date.parse(first)) / 86400000) : null;
+            }
+            catch (e) {
+                out.error = String(e).substring(0, 400);
+            }
+            return JSON.stringify(out);
+          timeout: 120s
+          parameters:
+            - name: host
+              value: '{HOST.CONN}'
+            - name: password
+              value: '{$INT.CCTV.PASSWORD}'
+            - name: port
+              value: '{$INT.CCTV.PORT}'
+            - name: record_window_min
+              value: '{$INT.CCTV.RECORD.WINDOW}'
+            - name: retention_track
+              value: '{$INT.CCTV.RETENTION.TRACK}'
+            - name: scheme
+              value: '{$INT.CCTV.SCHEME}'
+            - name: user
+              value: '{$INT.CCTV.USER}'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: f4eee514834d4db5952373b4ed7ed548
+          name: 'Recorder: API error'
+          type: DEPENDENT
+          key: 'int.cctv.error'
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.error'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.cctv.hik.get'
+          tags:
+            - tag: component
+              value: monitoring
+          triggers:
+            - uuid: ec4a8d844d1f4192a0b07dc53b5c7a00
+              expression: 'length(last(/INT MON-CCTV Hikvision NVR/int.cctv.error,#1))>0 and length(last(/INT MON-CCTV Hikvision NVR/int.cctv.error,#2))>0'
+              name: 'INT: Recorder {HOST.NAME} API checks fail'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'ISAPI disabled, password changed, user locked, or firmware without these endpoints. Text in item "Recorder: API error".'
+              dependencies:
+                - name: 'INT: Recorder {HOST.NAME} is unreachable'
+                  expression: 'max(/INT MON-CCTV Hikvision NVR/icmpping,{$INT.CCTV.RECORDER.DOWN.TIME})=0'
+              tags:
+                - tag: scope
+                  value: monitoring
+        - uuid: 0388558359d244eb86eac22ee4cca02d
+          name: 'Recorder: model'
+          type: DEPENDENT
+          key: 'int.cctv.model'
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.model'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.cctv.hik.get'
+          tags:
+            - tag: component
+              value: nvr
+        - uuid: e12a496e729d4f8ca0016892aa03853d
+          name: 'Recorder: firmware'
+          type: DEPENDENT
+          key: 'int.cctv.firmware'
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          description: 'Compare with Hikvision security advisories (MON-EXPOSURE KEV feed, MON-LIFECYCLE).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.firmware'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.cctv.hik.get'
+          tags:
+            - tag: component
+              value: nvr
+          triggers:
+            - uuid: 8427a3ab110b4220b6b142fc68339e7a
+              expression: 'last(/INT MON-CCTV Hikvision NVR/int.cctv.firmware,#1)<>last(/INT MON-CCTV Hikvision NVR/int.cctv.firmware,#2) and length(last(/INT MON-CCTV Hikvision NVR/int.cctv.firmware))>0'
+              name: 'INT: Recorder {HOST.NAME} firmware changed to {ITEM.LASTVALUE1}'
+              priority: INFO
+              tags:
+                - tag: scope
+                  value: notice
+        - uuid: 14f8cf8d004242aa97b67006e216618a
+          name: 'Recorder: time offset'
+          type: DEPENDENT
+          key: 'int.cctv.time.offset'
+          delay: '0'
+          units: 's'
+          description: 'Recorder clock minus Zabbix proxy clock. Evidence timestamps depend on it.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.time_offset'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.cctv.hik.get'
+          tags:
+            - tag: component
+              value: nvr
+          triggers:
+            - uuid: 13f081691a0744c9803bbb3fd684b298
+              expression: 'abs(last(/INT MON-CCTV Hikvision NVR/int.cctv.time.offset))>{$INT.CCTV.TIME.MAX}'
+              name: 'INT: Recorder {HOST.NAME} clock is off by {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Set NTP on the recorder (timestamps of evidence recordings).'
+              tags:
+                - tag: scope
+                  value: notice
+        - uuid: 76ba325e372d4e2f899d3ba9461f6bfb
+          name: 'Recorder: retention'
+          type: DEPENDENT
+          key: 'int.cctv.retention'
+          delay: '0'
+          units: 'd'
+          description: 'Age of the oldest recording of track {$INT.CCTV.RETENTION.TRACK}.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.retention_days'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.cctv.hik.get'
+          tags:
+            - tag: component
+              value: nvr
+          triggers:
+            - uuid: 5d8694b67e2c444eb2bb23ac518ce0ac
+              expression: 'last(/INT MON-CCTV Hikvision NVR/int.cctv.retention)<{$INT.CCTV.RETENTION.DAYS}-1'
+              name: 'INT: Recorder {HOST.NAME} keeps only {ITEM.LASTVALUE1} of video (agreed {$INT.CCTV.RETENTION.DAYS} d)'
+              priority: AVERAGE
+              description: 'Too little disk for the agreed retention (failed disk, more cameras, higher bitrate). Evidence may be missing.'
+              tags:
+                - tag: scope
+                  value: capacity
+            - uuid: aa7c26819cad4a33941b5a1ef334ff0b
+              expression: 'last(/INT MON-CCTV Hikvision NVR/int.cctv.retention)>{$INT.CCTV.RETENTION.MAX} and {$INT.CCTV.RETENTION.MAX}>0'
+              name: 'INT: Recorder {HOST.NAME} keeps video longer than allowed ({ITEM.LASTVALUE1})'
+              priority: WARNING
+              description: 'GDPR: recordings older than the customers documented maximum. Set the expiry time on the recorder.'
+              tags:
+                - tag: scope
+                  value: compliance
+      discovery_rules:
+        - uuid: 101605a3bcb04a868a20fdbe41e71d70
+          name: 'Channels discovery'
+          type: DEPENDENT
+          key: int.cctv.channels.discovery
+          delay: '0'
+          lifetime: 7d
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: 2254c2369e1e4b54a8ed579663485c93
+              name: 'Channel {#CHANNEL}: camera online'
+              type: DEPENDENT
+              key: 'int.cctv.ch.online[{#CHANNEL}]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.channels[?(@.id==''{#CHANNEL}'')].online.first()'
+                  error_handler: DISCARD_VALUE
+              valuemap:
+                name: 'INT CCTV yes/no'
+              master_item:
+                key: 'int.cctv.hik.get'
+              tags:
+                - tag: component
+                  value: channel
+            - uuid: 35d4add3036142da81a9b3ea58f1c6d9
+              name: 'Channel {#CHANNEL}: recorded in the last window'
+              type: DEPENDENT
+              key: 'int.cctv.ch.recorded[{#CHANNEL}]'
+              delay: '0'
+              description: '1 = a recording exists in the last {$INT.CCTV.RECORD.WINDOW} min.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.channels[?(@.id==''{#CHANNEL}'')].recorded.first()'
+                  error_handler: DISCARD_VALUE
+              valuemap:
+                name: 'INT CCTV yes/no'
+              master_item:
+                key: 'int.cctv.hik.get'
+              tags:
+                - tag: component
+                  value: channel
+          trigger_prototypes:
+            - uuid: 7ec69911304b43868398f62a927d9153
+              expression: 'max(/INT MON-CCTV Hikvision NVR/int.cctv.ch.online[{#CHANNEL}],#2)=0'
+              name: 'INT: Camera channel {#CHANNEL} on {HOST.NAME} is offline'
+              priority: AVERAGE
+              description: 'The camera does not deliver video to the recorder (power / PoE port, cable, camera dead). Two checks in a row.'
+              dependencies:
+                - name: 'INT: Recorder {HOST.NAME} is unreachable'
+                  expression: 'max(/INT MON-CCTV Hikvision NVR/icmpping,{$INT.CCTV.RECORDER.DOWN.TIME})=0'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: 1dac61164da94abb9dcf525c0870903e
+              expression: 'max(/INT MON-CCTV Hikvision NVR/int.cctv.ch.recorded[{#CHANNEL}],#2)=0 and {$INT.CCTV.RECORD.EXPECTED:"{#CHANNEL}"}=1'
+              name: 'INT: Channel {#CHANNEL} on {HOST.NAME} is not recording'
+              priority: HIGH
+              description: 'No recording in the last {$INT.CCTV.RECORD.WINDOW} min twice in a row: an incident on this camera would not be recorded. Check the recording schedule and the HDD. Motion-only / night-only channels: {$INT.CCTV.RECORD.EXPECTED:"<channel>"}=0.'
+              dependencies:
+                - name: 'INT: Camera channel {#CHANNEL} on {HOST.NAME} is offline'
+                  expression: 'max(/INT MON-CCTV Hikvision NVR/int.cctv.ch.online[{#CHANNEL}],#2)=0'
+                - name: 'INT: Recorder {HOST.NAME} is unreachable'
+                  expression: 'max(/INT MON-CCTV Hikvision NVR/icmpping,{$INT.CCTV.RECORDER.DOWN.TIME})=0'
+              tags:
+                - tag: scope
+                  value: availability
+          master_item:
+            key: int.cctv.hik.get
+          lld_macro_paths:
+            - lld_macro: '{#CHANNEL}'
+              path: $.id
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.channels
+        - uuid: 8669426e62eb4707ad973b3e86049000
+          name: 'Disks discovery'
+          type: DEPENDENT
+          key: int.cctv.hdd.discovery
+          delay: '0'
+          lifetime: 7d
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: c20103a08101453a98fba50f11c70990
+              name: 'Disk {#HDD}: OK'
+              type: DEPENDENT
+              key: 'int.cctv.hdd.ok[{#HDD}]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.hdds[?(@.id==''{#HDD}'')].ok.first()'
+                  error_handler: DISCARD_VALUE
+              valuemap:
+                name: 'INT CCTV yes/no'
+              master_item:
+                key: 'int.cctv.hik.get'
+              tags:
+                - tag: component
+                  value: hdd
+            - uuid: 33da64a5f7ef4a3db0d2d62cbb59ffe9
+              name: 'Disk {#HDD}: status'
+              type: DEPENDENT
+              key: 'int.cctv.hdd.status[{#HDD}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.hdds[?(@.id==''{#HDD}'')].status.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: 'int.cctv.hik.get'
+              tags:
+                - tag: component
+                  value: hdd
+          trigger_prototypes:
+            - uuid: e85921f3e9344098b52ec776dc718151
+              expression: 'max(/INT MON-CCTV Hikvision NVR/int.cctv.hdd.ok[{#HDD}],#2)=0 and length(last(/INT MON-CCTV Hikvision NVR/int.cctv.hdd.status[{#HDD}]))>=0'
+              name: 'INT: Recorder {HOST.NAME} disk {#HDD} is not OK'
+              opdata: '{ITEM.LASTVALUE2}'
+              priority: HIGH
+              description: 'Disk failed, unformatted or in error (status in opdata): recordings on it are lost / not written. Replace the disk.'
+              dependencies:
+                - name: 'INT: Recorder {HOST.NAME} is unreachable'
+                  expression: 'max(/INT MON-CCTV Hikvision NVR/icmpping,{$INT.CCTV.RECORDER.DOWN.TIME})=0'
+              tags:
+                - tag: scope
+                  value: availability
+          master_item:
+            key: int.cctv.hik.get
+          lld_macro_paths:
+            - lld_macro: '{#HDD}'
+              path: $.id
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.hdds
+      tags:
+        - tag: service
+          value: MON-CCTV
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.CCTV.INTERVAL}'
+          value: 15m
+        - macro: '{$INT.CCTV.PASSWORD}'
+          type: SECRET_TEXT
+          description: 'Password of the read-only ISAPI user on the recorder.'
+        - macro: '{$INT.CCTV.PORT}'
+          value: '80'
+        - macro: '{$INT.CCTV.RECORD.EXPECTED}'
+          value: '1'
+          description: 'Per channel with context, e.g. {$INT.CCTV.RECORD.EXPECTED:"5"}=0 for motion-only / scheduled channels.'
+        - macro: '{$INT.CCTV.RECORD.WINDOW}'
+          value: '30'
+          description: 'Minutes in which a recording must exist (continuous recording).'
+        - macro: '{$INT.CCTV.RECORDER.DOWN.TIME}'
+          value: 5m
+        - macro: '{$INT.CCTV.RETENTION.DAYS}'
+          value: '14'
+          description: 'Agreed retention days (customer GDPR assessment).'
+        - macro: '{$INT.CCTV.RETENTION.MAX}'
+          value: '0'
+          description: 'Maximum allowed retention days (GDPR). 0 = not checked.'
+        - macro: '{$INT.CCTV.RETENTION.TRACK}'
+          value: '101'
+          description: 'Track used for the retention check (channel 1 main stream = 101).'
+        - macro: '{$INT.CCTV.SCHEME}'
+          value: http
+        - macro: '{$INT.CCTV.TIME.MAX}'
+          value: '60'
+        - macro: '{$INT.CCTV.USER}'
+          value: zabbix
+      valuemaps:
+        - uuid: ff88c176347c44cb84dde0e29f8ff83a
+          name: 'INT CCTV yes/no'
+          mappings:
+            - value: '-1'
+              newvalue: unknown
+            - value: '0'
+              newvalue: 'no'
+            - value: '1'
+              newvalue: 'yes'

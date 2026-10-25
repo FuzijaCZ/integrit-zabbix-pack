@@ -1,0 +1,415 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 5e7dd0635656461180bbbf4c124d76b3
+      name: Templates/Integrit/MON-LIFECYCLE
+  templates:
+    - uuid: 3ddb4768b1ca4962aec8740bc335c1dc
+      template: 'INT MON-LIFECYCLE Asset'
+      name: 'INT MON-LIFECYCLE Asset'
+      description: |
+        Integrit MON-LIFECYCLE for any monitored asset (server, NAS, firewall, switch, hypervisor). Days until end of vendor support
+        (built-in Integrit lifecycle table by product, or a date macro), hardware warranty end, security subscription end and
+        vendor support contract end, all from host macros. Daily Script item, no agent needed. Mostly report data.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-LIFECYCLE
+      items:
+        - uuid: b15de6d3071d489eb4144d3d6bd741d6
+          name: 'Lifecycle raw'
+          type: SCRIPT
+          key: int.lc.asset.get
+          delay: 1d
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          params: |
+            var p = JSON.parse(value);
+            // Integrit lifecycle table: product -> end of (extended) vendor support, YYYY-MM-DD. Owner: Integrit, review quarterly.
+            var EOS = {
+                'Windows Server 2012': '2023-10-10', 'Windows Server 2012 R2': '2023-10-10',
+                'Windows Server 2016': '2027-01-12', 'Windows Server 2019': '2029-01-09',
+                'Windows Server 2022': '2031-10-14', 'Windows Server 2025': '2034-11-14',
+                'Windows 10': '2025-10-14', 'Windows 10 LTSC 2019': '2029-01-09', 'Windows 10 LTSC 2021': '2027-01-12',
+                'SQL Server 2014': '2024-07-09', 'SQL Server 2016': '2026-07-14', 'SQL Server 2017': '2027-10-12',
+                'SQL Server 2019': '2030-01-08', 'SQL Server 2022': '2033-01-11',
+                'Exchange 2013': '2023-04-11', 'Exchange 2016': '2025-10-14', 'Exchange 2019': '2025-10-14',
+                'Ubuntu 20.04': '2025-05-31', 'Ubuntu 22.04': '2027-06-01', 'Ubuntu 24.04': '2029-06-01',
+                'Debian 11': '2026-08-31', 'Debian 12': '2028-06-30',
+                'RHEL 7': '2024-06-30', 'RHEL 8': '2029-05-31', 'RHEL 9': '2032-05-31',
+                'Rocky Linux 8': '2029-05-31', 'Rocky Linux 9': '2032-05-31', 'AlmaLinux 8': '2029-05-31', 'AlmaLinux 9': '2032-05-31',
+                'VMware ESXi 7.0': '2025-10-02', 'VMware ESXi 8.0': '2027-10-11'
+            };
+            var out = {error: '', product: '', eos_source: ''};
+
+            function days(d, field) {
+                if (!d || d.indexOf('{$') === 0) {
+                    return null;
+                }
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+                    throw field + ': date "' + d + '" is not YYYY-MM-DD';
+                }
+                return Math.floor((Date.parse(d + 'T00:00:00Z') - Date.now()) / 86400000);
+            }
+
+            try {
+                var prod = (p.product || '').indexOf('{$') === 0 ? '' : p.product.trim();
+                var eos = (p.eos_date || '').indexOf('{$') === 0 ? '' : p.eos_date.trim();
+                if (!eos && prod) {
+                    if (!EOS.hasOwnProperty(prod)) {
+                        throw 'Product "' + prod + '" is not in the lifecycle table; set {$INT.LC.EOS.DATE} instead. Known: ' + Object.keys(EOS).join(', ');
+                    }
+                    eos = EOS[prod];
+                    out.eos_source = 'table';
+                }
+                else if (eos) {
+                    out.eos_source = 'macro';
+                }
+                out.product = prod;
+                out.eos_days = days(eos, '{$INT.LC.EOS.DATE}');
+                out.warranty_days = days(p.warranty, '{$INT.LC.WARRANTY.END}');
+                out.subscription_days = days(p.subscription, '{$INT.LC.SUBSCRIPTION.END}');
+                out.support_days = days(p.support, '{$INT.LC.SUPPORT.END}');
+            }
+            catch (e) {
+                out.error = String(e).substring(0, 500);
+            }
+            return JSON.stringify(out);
+          timeout: 10s
+          parameters:
+            - name: eos_date
+              value: '{$INT.LC.EOS.DATE}'
+            - name: product
+              value: '{$INT.LC.PRODUCT}'
+            - name: subscription
+              value: '{$INT.LC.SUBSCRIPTION.END}'
+            - name: support
+              value: '{$INT.LC.SUPPORT.END}'
+            - name: warranty
+              value: '{$INT.LC.WARRANTY.END}'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 1c44a8314b684ba3a2a192dd5d210909
+          name: 'Lifecycle: End of vendor support in'
+          type: DEPENDENT
+          key: int.lc.eos.days
+          delay: '0'
+          units: d
+          description: 'From the Integrit lifecycle table ({$INT.LC.PRODUCT}) or {$INT.LC.EOS.DATE}.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.eos_days
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.lc.asset.get
+          tags:
+            - tag: component
+              value: lifecycle
+          triggers:
+            - uuid: 3596e01a68794b3cb0040ca201e9bb55
+              expression: 'last(/INT MON-LIFECYCLE Asset/int.lc.eos.days)<0'
+              name: 'INT: {$INT.LC.PRODUCT} on {HOST.NAME} is out of vendor support'
+              priority: AVERAGE
+              description: 'No more security updates. Plan the upgrade / replacement (report: lifecycle table, budget outlook).'
+              tags:
+                - tag: scope
+                  value: lifecycle
+            - uuid: 81fdf38fcf4c41a08f735a9577df8adb
+              expression: 'last(/INT MON-LIFECYCLE Asset/int.lc.eos.days)<{$INT.LC.EOS.WARN}'
+              name: 'INT: {$INT.LC.PRODUCT} on {HOST.NAME} reaches end of support in {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Plan and budget the upgrade now.'
+              dependencies:
+                - name: 'INT: {$INT.LC.PRODUCT} on {HOST.NAME} is out of vendor support'
+                  expression: 'last(/INT MON-LIFECYCLE Asset/int.lc.eos.days)<0'
+              tags:
+                - tag: scope
+                  value: lifecycle
+        - uuid: 0b7a39b1b58a41d0b9a27e17ada64412
+          name: 'Lifecycle: Hardware warranty ends in'
+          type: DEPENDENT
+          key: int.lc.warranty.days
+          delay: '0'
+          units: d
+          description: 'From {$INT.LC.WARRANTY.END}.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.warranty_days
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.lc.asset.get
+          tags:
+            - tag: component
+              value: lifecycle
+          triggers:
+            - uuid: 77431dd4c8da4f3aa3b913f7ab33398e
+              expression: 'last(/INT MON-LIFECYCLE Asset/int.lc.warranty.days)<{$INT.LC.WARRANTY.WARN}'
+              name: 'INT: Hardware warranty of {HOST.NAME} ends in {ITEM.LASTVALUE1}'
+              priority: INFO
+              description: 'Offer a warranty extension or plan replacement (report item). Negative = already expired.'
+              tags:
+                - tag: scope
+                  value: lifecycle
+        - uuid: 1b656258a7db4e11847aad99459df4c0
+          name: 'Lifecycle: Security subscription ends in'
+          type: DEPENDENT
+          key: int.lc.subscription.days
+          delay: '0'
+          units: d
+          description: 'Firewall / security service subscription from {$INT.LC.SUBSCRIPTION.END} (FortiGate licences are also read live in MON-NET).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.subscription_days
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.lc.asset.get
+          tags:
+            - tag: component
+              value: lifecycle
+          triggers:
+            - uuid: c1a87087556541c684d93f7810e8b5bc
+              expression: 'last(/INT MON-LIFECYCLE Asset/int.lc.subscription.days)<{$INT.LC.SUBSCRIPTION.WARN}'
+              name: 'INT: Security subscription of {HOST.NAME} ends in {ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'IPS / web filter / AV signatures stop updating after expiry. Order the renewal.'
+              tags:
+                - tag: scope
+                  value: lifecycle
+        - uuid: e0cf06b30cd946448813c9cf9855f3e2
+          name: 'Lifecycle: Vendor support contract ends in'
+          type: DEPENDENT
+          key: int.lc.support.days
+          delay: '0'
+          units: d
+          description: 'Support / maintenance contract from {$INT.LC.SUPPORT.END} (e.g. Veeam, VMware, NAS vendor support).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.support_days
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.lc.asset.get
+          tags:
+            - tag: component
+              value: lifecycle
+          triggers:
+            - uuid: 841485bf497946438627283b828a36ec
+              expression: 'last(/INT MON-LIFECYCLE Asset/int.lc.support.days)<{$INT.LC.SUPPORT.WARN}'
+              name: 'INT: Vendor support contract of {HOST.NAME} ends in {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Renew or decide to run without vendor support.'
+              tags:
+                - tag: scope
+                  value: lifecycle
+        - uuid: ade7a777cce948e4a6dacba674a651c6
+          name: 'Lifecycle: Product'
+          type: DEPENDENT
+          key: int.lc.product
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.product
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.lc.asset.get
+          tags:
+            - tag: component
+              value: lifecycle
+        - uuid: 2749c3605ff34dfb9f5c80d56bb28069
+          name: 'Lifecycle: Configuration error'
+          type: DEPENDENT
+          key: int.lc.error
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.error
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.lc.asset.get
+          tags:
+            - tag: component
+              value: lifecycle
+          triggers:
+            - uuid: e8c890d0889943dca2f7cca91ca68c2f
+              expression: 'length(last(/INT MON-LIFECYCLE Asset/int.lc.error))>0'
+              name: 'INT: Lifecycle data of {HOST.NAME} is invalid'
+              priority: INFO
+              description: 'Wrong date format or unknown product in the lifecycle macros. Text in item "Lifecycle: Configuration error".'
+              tags:
+                - tag: scope
+                  value: monitoring
+      tags:
+        - tag: service
+          value: MON-LIFECYCLE
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.LC.EOS.DATE}'
+          description: 'YYYY-MM-DD end of vendor support, only when {$INT.LC.PRODUCT} is not in the table (overrides the table).'
+        - macro: '{$INT.LC.EOS.WARN}'
+          value: '180'
+        - macro: '{$INT.LC.PRODUCT}'
+          description: 'Product name exactly as in the lifecycle table, e.g. Windows Server 2019, Ubuntu 22.04, SQL Server 2017 (INSTALL lists all).'
+        - macro: '{$INT.LC.SUBSCRIPTION.END}'
+          description: 'YYYY-MM-DD end of the firewall / security subscription. Empty = none.'
+        - macro: '{$INT.LC.SUBSCRIPTION.WARN}'
+          value: '30'
+        - macro: '{$INT.LC.SUPPORT.END}'
+          description: 'YYYY-MM-DD end of the vendor support contract. Empty = none.'
+        - macro: '{$INT.LC.SUPPORT.WARN}'
+          value: '60'
+        - macro: '{$INT.LC.WARRANTY.END}'
+          description: 'YYYY-MM-DD end of the hardware warranty (Dell / Lenovo / HPE warranty portal). Empty = none.'
+        - macro: '{$INT.LC.WARRANTY.WARN}'
+          value: '60'
+    - uuid: 5982a88f3bb34f1f96b043fc04a19d83
+      template: 'INT MON-LIFECYCLE Renewals'
+      name: 'INT MON-LIFECYCLE Renewals'
+      description: |
+        Integrit MON-LIFECYCLE renewal calendar of one customer: third-party subscriptions, licences, support contracts and
+        registrations (Veeam, ESET, FortiCare / FortiGuard, Synology / QNAP support, domains, SSL bought yearly, software
+        maintenance). Entries in {$INT.LC.RENEWALS}; warns 30 / 14 / 7 days ahead and when expired. Daily, no agent.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-LIFECYCLE
+      items:
+        - uuid: cc6eb6cbab6743858d509c3b0bc7ecec
+          name: 'Renewals raw'
+          type: SCRIPT
+          key: int.lc.renew.get
+          delay: 1d
+          history: 7d
+          value_type: TEXT
+          trends: '0'
+          params: |
+            var p = JSON.parse(value), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.split('|').map(function (x) { return x.trim(); });
+                if (f.length !== 2 || !/^\d{4}-\d{2}-\d{2}$/.test(f[1])) {
+                    throw 'Entry "' + entry + '" must be label|YYYY-MM-DD';
+                }
+                out.push({label: f[0], 'days': Math.floor((Date.parse(f[1] + 'T00:00:00Z') - Date.now()) / 86400000), 'date': f[1]});
+            });
+            return JSON.stringify(out);
+          timeout: 10s
+          parameters:
+            - name: list
+              value: '{$INT.LC.RENEWALS}'
+          description: 'An entry error makes this item Not supported with the entry in the error text.'
+          tags:
+            - tag: component
+              value: raw
+          triggers:
+            - uuid: ca42f65d03814f0ca58a16cbfd85179a
+              expression: 'nodata(/INT MON-LIFECYCLE Renewals/int.lc.renew.get,{$INT.LC.NODATA})=1'
+              name: 'INT: Renewal calendar is not evaluated'
+              priority: INFO
+              description: 'Wrong entry in {$INT.LC.RENEWALS} (item Not supported: see its error) or the proxy is down.'
+              tags:
+                - tag: scope
+                  value: monitoring
+      discovery_rules:
+        - uuid: 9bb357587a0549eb96a24b5a724d4cba
+          name: 'Renewals discovery'
+          type: DEPENDENT
+          key: int.lc.renew.discovery
+          delay: '0'
+          enabled_lifetime_type: DISABLE_NEVER
+          lifetime: 1d
+          item_prototypes:
+            - uuid: 60565f64a3e9471ab688a786277d06f0
+              name: 'Renewal {#LABEL}: Days left'
+              type: DEPENDENT
+              key: 'int.lc.renew.days["{#LABEL}"]'
+              delay: '0'
+              units: d
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.label==''{#LABEL}'')].days.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: int.lc.renew.get
+              tags:
+                - tag: component
+                  value: renewal
+          trigger_prototypes:
+            - uuid: ab00520a01c94d178789177dac0fc45c
+              expression: 'last(/INT MON-LIFECYCLE Renewals/int.lc.renew.days["{#LABEL}"])<0'
+              name: 'INT: {#LABEL} has expired'
+              priority: HIGH
+              description: 'The subscription / licence / registration has expired: service may stop (backup jobs, AV updates, domain resolution).'
+              tags:
+                - tag: scope
+                  value: lifecycle
+            - uuid: abd6eeaf25a94ebebd1c9d229c34f809
+              expression: 'last(/INT MON-LIFECYCLE Renewals/int.lc.renew.days["{#LABEL}"])<{$INT.LC.RENEW.HIGH:"{#LABEL}"}'
+              name: 'INT: {#LABEL} expires in {ITEM.LASTVALUE1} (< {$INT.LC.RENEW.HIGH:"{#LABEL}"} d)'
+              priority: HIGH
+              description: 'Order the renewal now.'
+              dependencies:
+                - name: 'INT: {#LABEL} has expired'
+                  expression: 'last(/INT MON-LIFECYCLE Renewals/int.lc.renew.days["{#LABEL}"])<0'
+              tags:
+                - tag: scope
+                  value: lifecycle
+            - uuid: e7381ce60b9f4a5e8e5aa362bb2a58c1
+              expression: 'last(/INT MON-LIFECYCLE Renewals/int.lc.renew.days["{#LABEL}"])<{$INT.LC.RENEW.AVERAGE:"{#LABEL}"}'
+              name: 'INT: {#LABEL} expires in {ITEM.LASTVALUE1} (< {$INT.LC.RENEW.AVERAGE:"{#LABEL}"} d)'
+              priority: AVERAGE
+              description: 'Order the renewal.'
+              dependencies:
+                - name: 'INT: {#LABEL} expires in {ITEM.LASTVALUE1} (< {$INT.LC.RENEW.HIGH:"{#LABEL}"} d)'
+                  expression: 'last(/INT MON-LIFECYCLE Renewals/int.lc.renew.days["{#LABEL}"])<{$INT.LC.RENEW.HIGH:"{#LABEL}"}'
+              tags:
+                - tag: scope
+                  value: lifecycle
+            - uuid: 13168d93393c49aaa9ad8e3a63e6800b
+              expression: 'last(/INT MON-LIFECYCLE Renewals/int.lc.renew.days["{#LABEL}"])<{$INT.LC.RENEW.WARN:"{#LABEL}"}'
+              name: 'INT: {#LABEL} expires in {ITEM.LASTVALUE1} (< {$INT.LC.RENEW.WARN:"{#LABEL}"} d)'
+              priority: WARNING
+              description: 'Send the renewal offer to the customer.'
+              dependencies:
+                - name: 'INT: {#LABEL} expires in {ITEM.LASTVALUE1} (< {$INT.LC.RENEW.AVERAGE:"{#LABEL}"} d)'
+                  expression: 'last(/INT MON-LIFECYCLE Renewals/int.lc.renew.days["{#LABEL}"])<{$INT.LC.RENEW.AVERAGE:"{#LABEL}"}'
+              tags:
+                - tag: scope
+                  value: lifecycle
+          master_item:
+            key: int.lc.renew.get
+          lld_macro_paths:
+            - lld_macro: '{#LABEL}'
+              path: $.label
+      tags:
+        - tag: service
+          value: MON-LIFECYCLE
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.LC.NODATA}'
+          value: 2d
+        - macro: '{$INT.LC.RENEW.AVERAGE}'
+          value: '14'
+        - macro: '{$INT.LC.RENEW.HIGH}'
+          value: '7'
+        - macro: '{$INT.LC.RENEW.WARN}'
+          value: '30'
+        - macro: '{$INT.LC.RENEWALS}'
+          description: 'label|YYYY-MM-DD;... (no apostrophes in labels) e.g. Veeam B&R licence|2027-02-28;FortiGuard UTP FGT-PRG|2027-05-14;acme.cz domain|2026-12-01'

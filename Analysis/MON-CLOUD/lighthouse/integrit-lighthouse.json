@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-08-01/subscriptionDeploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "managedByTenantId": {
+      "type": "string",
+      "metadata": { "description": "Integrit Entra tenant ID (the managing tenant)." }
+    },
+    "principalId": {
+      "type": "string",
+      "metadata": { "description": "Object ID of the Integrit monitoring service principal (Enterprise application) in the Integrit tenant." }
+    },
+    "principalIdDisplayName": {
+      "type": "string",
+      "defaultValue": "Integrit Zabbix monitoring",
+      "metadata": { "description": "Name shown to the customer in Service providers." }
+    }
+  },
+  "variables": {
+    "mspOfferName": "Integrit monitoring (read-only)",
+    "mspOfferDescription": "Read-only access for Integrit monitoring: resource health, metrics and costs. No write access.",
+    "mspRegistrationName": "[guid(variables('mspOfferName'))]",
+    "mspAssignmentName": "[guid(variables('mspOfferName'))]",
+    "authorizations": [
+      { "principalId": "[parameters('principalId')]", "principalIdDisplayName": "[parameters('principalIdDisplayName')]", "roleDefinitionId": "acdd72a7-3385-48ef-bd42-f606fba81ae7" },
+      { "principalId": "[parameters('principalId')]", "principalIdDisplayName": "[parameters('principalIdDisplayName')]", "roleDefinitionId": "43d0d8ad-25c7-4714-9337-8ba259a9fe05" },
+      { "principalId": "[parameters('principalId')]", "principalIdDisplayName": "[parameters('principalIdDisplayName')]", "roleDefinitionId": "72fafb9e-0641-4937-9268-a91bfd8191a3" }
+    ]
+  },
+  "resources": [
+    {
+      "type": "Microsoft.ManagedServices/registrationDefinitions",
+      "apiVersion": "2022-10-01",
+      "name": "[variables('mspRegistrationName')]",
+      "properties": {
+        "registrationDefinitionName": "[variables('mspOfferName')]",
+        "description": "[variables('mspOfferDescription')]",
+        "managedByTenantId": "[parameters('managedByTenantId')]",
+        "authorizations": "[variables('authorizations')]"
+      }
+    },
+    {
+      "type": "Microsoft.ManagedServices/registrationAssignments",
+      "apiVersion": "2022-10-01",
+      "name": "[variables('mspAssignmentName')]",
+      "dependsOn": [ "[resourceId('Microsoft.ManagedServices/registrationDefinitions/', variables('mspRegistrationName'))]" ],
+      "properties": {
+        "registrationDefinitionId": "[resourceId('Microsoft.ManagedServices/registrationDefinitions/', variables('mspRegistrationName'))]"
+      }
+    }
+  ],
+  "outputs": {
+    "mspOfferName": { "type": "string", "value": "[concat('Managed by ', variables('mspOfferName'))]" }
+  }
+}

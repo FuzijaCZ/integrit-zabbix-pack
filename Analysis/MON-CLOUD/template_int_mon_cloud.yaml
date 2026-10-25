@@ -1,0 +1,834 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: a2aa4d921eee4c2083e100b5b5eefdb0
+      name: Templates/Integrit/MON-CLOUD
+  templates:
+    - uuid: 4e6d872aaa6c4f978c7a5edb9f4c13f9
+      template: 'INT MON-CLOUD AWS account'
+      name: 'INT MON-CLOUD AWS account'
+      description: |
+        Integrit MON-CLOUD for one AWS account (on request): official 'AWS Cost Explorer by HTTP' with cross-account
+        assume-role. Per-resource hosts use the official AWS EC2 / RDS / S3 / ELB / Lambda / Backup Vault templates directly.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'AWS Cost Explorer by HTTP'
+      groups:
+        - name: Templates/Integrit/MON-CLOUD
+      tags:
+        - tag: service
+          value: MON-CLOUD
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$AWS.AUTH_TYPE}'
+          value: 'assume_role'
+          description: 'Cross-account read-only role of the customer (draft 5.6.14).'
+    - uuid: dceab64a4a494955b6027a33d637727f
+      template: 'INT MON-CLOUD Azure backup vault'
+      name: 'INT MON-CLOUD Azure backup vault'
+      description: |
+        Integrit MON-CLOUD for one Recovery Services vault: official 'Azure Backup Jobs by HTTP' (failed job HIGH,
+        restore / deletion jobs). Reported in the MON-BKP section for customers with both services.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'Azure Backup Jobs by HTTP'
+      groups:
+        - name: Templates/Integrit/MON-CLOUD
+      tags:
+        - tag: service
+          value: MON-CLOUD
+        - tag: version
+          value: '1.0'
+    - uuid: 797436b6e2e8472f8da85eac00f891b7
+      template: 'INT MON-CLOUD Azure SQL database'
+      name: 'INT MON-CLOUD Azure SQL database'
+      description: |
+        Integrit MON-CLOUD for one Azure SQL database (vCore). Official 'Azure Microsoft SQL Database by HTTP' with storage
+        thresholds per draft 85 / 95 % (official severities: WARNING / AVERAGE). DTU or serverless databases: link the matching
+        official template on the host instead, with the same macro values.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'Azure Microsoft SQL Database by HTTP'
+      groups:
+        - name: Templates/Integrit/MON-CLOUD
+      tags:
+        - tag: service
+          value: MON-CLOUD
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$AZURE.DB.STORAGE.PUSED.CRIT}'
+          value: '95'
+          description: 'Draft 5.6.14: > 95 %.'
+        - macro: '{$AZURE.DB.STORAGE.PUSED.WARN}'
+          value: '85'
+          description: 'Draft 5.6.14: > 85 %.'
+    - uuid: 079318fb49d04530bdf731ee05148cfe
+      template: 'INT MON-CLOUD Azure subscription'
+      name: 'INT MON-CLOUD Azure subscription'
+      description: |
+        Integrit MON-CLOUD for one Azure subscription (external proxy, Azure Lighthouse service principal of Integrit).
+        Links the official 'Azure Cost Management by HTTP' (cost breakdown for the report) and adds: Resource Health of all
+        resources in scope, VMs stopped unexpectedly (tag-based exceptions), active Azure service issues, month-to-date cost vs
+        budget, forecast and daily anomaly. Per-resource detail: separate hosts with the INT MON-CLOUD Azure VM / SQL / backup
+        templates (no auto-created hosts: keeps tenants separated and billing counts predictable).
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'Azure Cost Management by HTTP'
+      groups:
+        - name: Templates/Integrit/MON-CLOUD
+      items:
+        - uuid: b83eaf2b6da1400fbd7ef681b38179c9
+          name: 'Azure health raw'
+          type: SCRIPT
+          key: int.azure.health.get
+          delay: 10m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          params: |
+            var p = JSON.parse(value);
+            var ARM = 'https://management.azure.com/subscriptions/' + encodeURIComponent(p.subscription_id);
+            var out = {error: '', optional_errors: ''};
+            var token;
+
+            function request(url, body, form) {
+                var req = new HttpRequest();
+                if (p.proxy && p.proxy.indexOf('{$') !== 0) {
+                    req.setProxy(p.proxy);
+                }
+                req.addHeader(form ? 'Content-Type: application/x-www-form-urlencoded' : 'Content-Type: application/json');
+                if (token) {
+                    req.addHeader('Authorization: Bearer ' + token);
+                }
+                var resp = body !== undefined ? req.post(url, body) : req.get(url);
+                var st = req.getStatus();
+                if (st < 200 || st >= 300) {
+                    throw 'HTTP ' + st + ' ' + url.replace(/^https:\/\/[^/]+/, '').replace(/\?.*$/, '').replace(/^\/subscriptions\/[^/]+/, '') + ': ' + String(resp).substring(0, 120);
+                }
+                return JSON.parse(resp);
+            }
+
+            function list(url) {
+                var res = [], n = 0;
+                while (url && n < 20) {
+                    var r = request(url);
+                    res = res.concat(r.value || []);
+                    url = r.nextLink;
+                    n++;
+                }
+                return res;
+            }
+
+            function optional(name, fn) {
+                try {
+                    fn();
+                }
+                catch (e) {
+                    out.optional_errors += (out.optional_errors ? '; ' : '') + name + ': ' + String(e).substring(0, 150);
+                }
+            }
+
+            function short(arr) {
+                return ((arr.length > 6 ? arr.length + ': ' : '') + arr.slice(0, 6).join(', ')).substring(0, 240);
+            }
+
+            // /subscriptions/x/resourceGroups/RG/providers/Microsoft.Compute/virtualMachines/NAME[/providers/...] -> {rg, type, name}
+            function rid(id) {
+                var m = /resourceGroups\/([^/]+)\/providers\/([^/]+\/[^/]+)\/([^/]+)/i.exec(id) || [];
+                return {rg: m[1] || '', type: m[2] || '', name: m[3] || id};
+            }
+
+            try {
+                ['tenant_id', 'app_id', 'password', 'subscription_id'].forEach(function (f) {
+                    if (!p[f] || p[f].indexOf('{$') === 0) {
+                        throw 'Parameter ' + f + ' is not set (host macro).';
+                    }
+                });
+                token = request('https://login.microsoftonline.com/' + encodeURIComponent(p.tenant_id) + '/oauth2/v2.0/token',
+                    'grant_type=client_credentials&scope=' + encodeURIComponent('https://management.azure.com/.default') +
+                    '&client_id=' + encodeURIComponent(p.app_id) + '&client_secret=' + encodeURIComponent(p.password), true).access_token;
+                var rgRe = new RegExp(p.rg_matches, 'i'), rgNot = new RegExp(p.rg_not_matches, 'i');
+                var inScope = function (rg) { return rgRe.test(rg) && !rgNot.test(rg); };
+
+                if (p.mode === 'health') {
+                    // Resource Health of every resource in scope (Unavailable / Degraded).
+                    var bad = [];
+                    list(ARM + '/providers/Microsoft.ResourceHealth/availabilityStatuses?api-version=2022-10-01').forEach(function (s) {
+                        var r = rid(s.id), st = (s.properties || {}).availabilityState;
+                        if (inScope(r.rg) && (st === 'Unavailable' || st === 'Degraded')) {
+                            bad.push(r.name + ' ' + st);
+                        }
+                    });
+                    out.health_bad = bad.length; out.health_bad_text = short(bad);
+
+                    // VM power state: stopped / deallocated VMs not tagged as allowed to be off.
+                    var off = [], running = 0;
+                    list(ARM + '/providers/Microsoft.Compute/virtualMachines?api-version=2024-03-01&statusOnly=true').forEach(function (vm) {
+                        var r = rid(vm.id), tags = vm.tags || {};
+                        if (!inScope(r.rg) || tags.hasOwnProperty(p.ignore_tag)) {
+                            return;
+                        }
+                        var ps = '';
+                        (((vm.properties || {}).instanceView || {}).statuses || []).forEach(function (x) {
+                            if (/^PowerState\//.test(x.code)) {
+                                ps = x.code.split('/')[1];
+                            }
+                        });
+                        if (ps === 'running') {
+                            running++;
+                        }
+                        else if (ps) {
+                            off.push(vm.name + ' ' + ps);
+                        }
+                    });
+                    out.vm_running = running; out.vm_off = off.length; out.vm_off_text = short(off);
+
+                    // Active Azure service issues affecting the subscription.
+                    optional('service health', function () {
+                        var ev = list(ARM + '/providers/Microsoft.ResourceHealth/events?api-version=2022-10-01&$filter=' +
+                            encodeURIComponent("properties/eventType eq 'ServiceIssue' and properties/status eq 'Active'"));
+                        out.service_issues = ev.length;
+                        out.service_issues_text = short(ev.map(function (e) { return (e.properties || {}).title; }));
+                    });
+                }
+
+                // Cost: month to date, linear projection, yesterday vs average of the 7 days before (Cost Management, delayed up to 24 h).
+                if (p.mode === 'cost') {
+                    optional('cost', function () {
+                        var now = new Date(), day = 86400000;
+                        var first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+                        var from = new Date(Math.min(first.getTime(), now.getTime() - 9 * day));
+                        var q = request(ARM + '/providers/Microsoft.CostManagement/query?api-version=2023-11-01', JSON.stringify({
+                            type: 'ActualCost', timeframe: 'Custom',
+                            timePeriod: {from: from.toISOString().substring(0, 10) + 'T00:00:00Z', to: now.toISOString().substring(0, 10) + 'T23:59:59Z'},
+                            dataset: {granularity: 'Daily', aggregation: {totalCost: {name: 'Cost', function: 'Sum'}}}
+                        }));
+                        var cols = (q.properties.columns || []).map(function (c) { return c.name; });
+                        var ci = cols.indexOf('Cost'), di = cols.indexOf('UsageDate'), ui = cols.indexOf('Currency');
+                        var byDay = {}, mtd = 0, cur = '';
+                        (q.properties.rows || []).forEach(function (r) {
+                            var d = String(r[di]);
+                            byDay[d] = (byDay[d] || 0) + r[ci];
+                            cur = r[ui] || cur;
+                            if (d >= first.toISOString().substring(0, 10).replace(/-/g, '')) {
+                                mtd += r[ci];
+                            }
+                        });
+                        var key = function (t) { return new Date(t).toISOString().substring(0, 10).replace(/-/g, ''); };
+                        var y = byDay[key(now.getTime() - day)] || 0, prev = 0;
+                        for (var i = 2; i <= 8; i++) {
+                            prev += byDay[key(now.getTime() - i * day)] || 0;
+                        }
+                        var dim = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate();
+                        var elapsed = Math.max(1, now.getUTCDate() - 1);
+                        out.cost_mtd = Math.round(mtd * 100) / 100;
+                        out.cost_forecast = Math.round(mtd / elapsed * dim * 100) / 100;
+                        out.cost_yesterday = Math.round(y * 100) / 100;
+                        out.cost_avg7 = Math.round(prev / 7 * 100) / 100;
+                        out.currency = cur;
+                    });
+                }
+            }
+            catch (e) {
+                out.error = String(e).substring(0, 500);
+            }
+            return JSON.stringify(out);
+          timeout: 60s
+          parameters:
+            - name: app_id
+              value: '{$AZURE.APP.ID}'
+            - name: ignore_tag
+              value: '{$INT.CLOUD.IGNORE.POWER.TAG}'
+            - name: mode
+              value: 'health'
+            - name: password
+              value: '{$AZURE.PASSWORD}'
+            - name: proxy
+              value: '{$AZURE.PROXY}'
+            - name: rg_matches
+              value: '{$AZURE.RESOURCE.GROUP.MATCHES}'
+            - name: rg_not_matches
+              value: '{$AZURE.RESOURCE.GROUP.NOT.MATCHES}'
+            - name: subscription_id
+              value: '{$AZURE.SUBSCRIPTION.ID}'
+            - name: tenant_id
+              value: '{$AZURE.TENANT.ID}'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 380d208a50b64817b011c22698117848
+          name: 'Azure cost raw'
+          type: SCRIPT
+          key: int.azure.cost.get
+          delay: '0s;h7'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          params: |
+            var p = JSON.parse(value);
+            var ARM = 'https://management.azure.com/subscriptions/' + encodeURIComponent(p.subscription_id);
+            var out = {error: '', optional_errors: ''};
+            var token;
+
+            function request(url, body, form) {
+                var req = new HttpRequest();
+                if (p.proxy && p.proxy.indexOf('{$') !== 0) {
+                    req.setProxy(p.proxy);
+                }
+                req.addHeader(form ? 'Content-Type: application/x-www-form-urlencoded' : 'Content-Type: application/json');
+                if (token) {
+                    req.addHeader('Authorization: Bearer ' + token);
+                }
+                var resp = body !== undefined ? req.post(url, body) : req.get(url);
+                var st = req.getStatus();
+                if (st < 200 || st >= 300) {
+                    throw 'HTTP ' + st + ' ' + url.replace(/^https:\/\/[^/]+/, '').replace(/\?.*$/, '').replace(/^\/subscriptions\/[^/]+/, '') + ': ' + String(resp).substring(0, 120);
+                }
+                return JSON.parse(resp);
+            }
+
+            function list(url) {
+                var res = [], n = 0;
+                while (url && n < 20) {
+                    var r = request(url);
+                    res = res.concat(r.value || []);
+                    url = r.nextLink;
+                    n++;
+                }
+                return res;
+            }
+
+            function optional(name, fn) {
+                try {
+                    fn();
+                }
+                catch (e) {
+                    out.optional_errors += (out.optional_errors ? '; ' : '') + name + ': ' + String(e).substring(0, 150);
+                }
+            }
+
+            function short(arr) {
+                return ((arr.length > 6 ? arr.length + ': ' : '') + arr.slice(0, 6).join(', ')).substring(0, 240);
+            }
+
+            // /subscriptions/x/resourceGroups/RG/providers/Microsoft.Compute/virtualMachines/NAME[/providers/...] -> {rg, type, name}
+            function rid(id) {
+                var m = /resourceGroups\/([^/]+)\/providers\/([^/]+\/[^/]+)\/([^/]+)/i.exec(id) || [];
+                return {rg: m[1] || '', type: m[2] || '', name: m[3] || id};
+            }
+
+            try {
+                ['tenant_id', 'app_id', 'password', 'subscription_id'].forEach(function (f) {
+                    if (!p[f] || p[f].indexOf('{$') === 0) {
+                        throw 'Parameter ' + f + ' is not set (host macro).';
+                    }
+                });
+                token = request('https://login.microsoftonline.com/' + encodeURIComponent(p.tenant_id) + '/oauth2/v2.0/token',
+                    'grant_type=client_credentials&scope=' + encodeURIComponent('https://management.azure.com/.default') +
+                    '&client_id=' + encodeURIComponent(p.app_id) + '&client_secret=' + encodeURIComponent(p.password), true).access_token;
+                var rgRe = new RegExp(p.rg_matches, 'i'), rgNot = new RegExp(p.rg_not_matches, 'i');
+                var inScope = function (rg) { return rgRe.test(rg) && !rgNot.test(rg); };
+
+                if (p.mode === 'health') {
+                    // Resource Health of every resource in scope (Unavailable / Degraded).
+                    var bad = [];
+                    list(ARM + '/providers/Microsoft.ResourceHealth/availabilityStatuses?api-version=2022-10-01').forEach(function (s) {
+                        var r = rid(s.id), st = (s.properties || {}).availabilityState;
+                        if (inScope(r.rg) && (st === 'Unavailable' || st === 'Degraded')) {
+                            bad.push(r.name + ' ' + st);
+                        }
+                    });
+                    out.health_bad = bad.length; out.health_bad_text = short(bad);
+
+                    // VM power state: stopped / deallocated VMs not tagged as allowed to be off.
+                    var off = [], running = 0;
+                    list(ARM + '/providers/Microsoft.Compute/virtualMachines?api-version=2024-03-01&statusOnly=true').forEach(function (vm) {
+                        var r = rid(vm.id), tags = vm.tags || {};
+                        if (!inScope(r.rg) || tags.hasOwnProperty(p.ignore_tag)) {
+                            return;
+                        }
+                        var ps = '';
+                        (((vm.properties || {}).instanceView || {}).statuses || []).forEach(function (x) {
+                            if (/^PowerState\//.test(x.code)) {
+                                ps = x.code.split('/')[1];
+                            }
+                        });
+                        if (ps === 'running') {
+                            running++;
+                        }
+                        else if (ps) {
+                            off.push(vm.name + ' ' + ps);
+                        }
+                    });
+                    out.vm_running = running; out.vm_off = off.length; out.vm_off_text = short(off);
+
+                    // Active Azure service issues affecting the subscription.
+                    optional('service health', function () {
+                        var ev = list(ARM + '/providers/Microsoft.ResourceHealth/events?api-version=2022-10-01&$filter=' +
+                            encodeURIComponent("properties/eventType eq 'ServiceIssue' and properties/status eq 'Active'"));
+                        out.service_issues = ev.length;
+                        out.service_issues_text = short(ev.map(function (e) { return (e.properties || {}).title; }));
+                    });
+                }
+
+                // Cost: month to date, linear projection, yesterday vs average of the 7 days before (Cost Management, delayed up to 24 h).
+                if (p.mode === 'cost') {
+                    optional('cost', function () {
+                        var now = new Date(), day = 86400000;
+                        var first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+                        var from = new Date(Math.min(first.getTime(), now.getTime() - 9 * day));
+                        var q = request(ARM + '/providers/Microsoft.CostManagement/query?api-version=2023-11-01', JSON.stringify({
+                            type: 'ActualCost', timeframe: 'Custom',
+                            timePeriod: {from: from.toISOString().substring(0, 10) + 'T00:00:00Z', to: now.toISOString().substring(0, 10) + 'T23:59:59Z'},
+                            dataset: {granularity: 'Daily', aggregation: {totalCost: {name: 'Cost', function: 'Sum'}}}
+                        }));
+                        var cols = (q.properties.columns || []).map(function (c) { return c.name; });
+                        var ci = cols.indexOf('Cost'), di = cols.indexOf('UsageDate'), ui = cols.indexOf('Currency');
+                        var byDay = {}, mtd = 0, cur = '';
+                        (q.properties.rows || []).forEach(function (r) {
+                            var d = String(r[di]);
+                            byDay[d] = (byDay[d] || 0) + r[ci];
+                            cur = r[ui] || cur;
+                            if (d >= first.toISOString().substring(0, 10).replace(/-/g, '')) {
+                                mtd += r[ci];
+                            }
+                        });
+                        var key = function (t) { return new Date(t).toISOString().substring(0, 10).replace(/-/g, ''); };
+                        var y = byDay[key(now.getTime() - day)] || 0, prev = 0;
+                        for (var i = 2; i <= 8; i++) {
+                            prev += byDay[key(now.getTime() - i * day)] || 0;
+                        }
+                        var dim = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate();
+                        var elapsed = Math.max(1, now.getUTCDate() - 1);
+                        out.cost_mtd = Math.round(mtd * 100) / 100;
+                        out.cost_forecast = Math.round(mtd / elapsed * dim * 100) / 100;
+                        out.cost_yesterday = Math.round(y * 100) / 100;
+                        out.cost_avg7 = Math.round(prev / 7 * 100) / 100;
+                        out.currency = cur;
+                    });
+                }
+            }
+            catch (e) {
+                out.error = String(e).substring(0, 500);
+            }
+            return JSON.stringify(out);
+          timeout: 60s
+          parameters:
+            - name: app_id
+              value: '{$AZURE.APP.ID}'
+            - name: ignore_tag
+              value: '{$INT.CLOUD.IGNORE.POWER.TAG}'
+            - name: mode
+              value: 'cost'
+            - name: password
+              value: '{$AZURE.PASSWORD}'
+            - name: proxy
+              value: '{$AZURE.PROXY}'
+            - name: rg_matches
+              value: '{$AZURE.RESOURCE.GROUP.MATCHES}'
+            - name: rg_not_matches
+              value: '{$AZURE.RESOURCE.GROUP.NOT.MATCHES}'
+            - name: subscription_id
+              value: '{$AZURE.SUBSCRIPTION.ID}'
+            - name: tenant_id
+              value: '{$AZURE.TENANT.ID}'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 320b36e1f7b54511bade67b2fb26a494
+          name: 'Azure: active service issues'
+          type: DEPENDENT
+          key: int.azure.service_issues
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.service_issues
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.azure.health.get
+          tags:
+            - tag: component
+              value: azure
+          triggers:
+            - uuid: d2de157f519c4ebb8b61e294482bc268
+              expression: 'last(/INT MON-CLOUD Azure subscription/int.azure.service_issues)>0 and length(last(/INT MON-CLOUD Azure subscription/int.azure.service_issues.text))>=0'
+              name: 'INT: Azure service issue affects subscription {HOST.NAME}'
+              opdata: '{ITEM.LASTVALUE2}'
+              priority: AVERAGE
+              description: 'Microsoft platform incident in regions / services used by this subscription (Service Health). Explains resource problems; no action at the customer.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: f4b60b4c9a0e47d7b6fe5d9430f54547
+          name: 'Azure: active service issues list'
+          type: DEPENDENT
+          key: int.azure.service_issues.text
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.service_issues_text
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.azure.health.get
+          tags:
+            - tag: component
+              value: azure
+        - uuid: f2c5ae0457cb4bc79eb111b4da059706
+          name: 'Azure: resources unavailable or degraded'
+          type: DEPENDENT
+          key: int.azure.health.bad
+          delay: '0'
+          description: 'Resource Health, resource groups in scope.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.health_bad
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.azure.health.get
+          tags:
+            - tag: component
+              value: azure
+          triggers:
+            - uuid: bcd2578f8aca4a489a0ca7067803a780
+              expression: 'min(/INT MON-CLOUD Azure subscription/int.azure.health.bad,#2)>0 and length(last(/INT MON-CLOUD Azure subscription/int.azure.health.bad.text))>=0'
+              name: 'INT: Azure resources unavailable or degraded in {HOST.NAME}'
+              opdata: '{ITEM.LASTVALUE2}'
+              priority: AVERAGE
+              description: 'Resource Health reports Unavailable / Degraded (list in opdata). Per-resource hosts (VM, SQL) alert with their own triggers.'
+              dependencies:
+                - name: 'INT: Azure service issue affects subscription {HOST.NAME}'
+                  expression: 'last(/INT MON-CLOUD Azure subscription/int.azure.service_issues)>0 and length(last(/INT MON-CLOUD Azure subscription/int.azure.service_issues.text))>=0'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 1cbf335cde714a46aa3377a0dc6772d5
+          name: 'Azure: resources unavailable or degraded list'
+          type: DEPENDENT
+          key: int.azure.health.bad.text
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.health_bad_text
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.azure.health.get
+          tags:
+            - tag: component
+              value: azure
+        - uuid: 76b0ac517a75437e8030b8d8b1cb5fec
+          name: 'Azure: VMs not running'
+          type: DEPENDENT
+          key: int.azure.vm.off
+          delay: '0'
+          description: 'Stopped / deallocated VMs without tag {$INT.CLOUD.IGNORE.POWER.TAG}.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.vm_off
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.azure.health.get
+          tags:
+            - tag: component
+              value: azure
+          triggers:
+            - uuid: 47ce1258ea5d499a9349f715b86ee7fa
+              expression: 'min(/INT MON-CLOUD Azure subscription/int.azure.vm.off,#2)>0 and length(last(/INT MON-CLOUD Azure subscription/int.azure.vm.off.text))>=0'
+              name: 'INT: Azure VM stopped unexpectedly in {HOST.NAME}'
+              opdata: '{ITEM.LASTVALUE2}'
+              priority: HIGH
+              description: 'A production VM is stopped or deallocated (list in opdata). VMs that are off on purpose (schedules, dev): add the tag {$INT.CLOUD.IGNORE.POWER.TAG} in Azure.'
+              dependencies:
+                - name: 'INT: Azure service issue affects subscription {HOST.NAME}'
+                  expression: 'last(/INT MON-CLOUD Azure subscription/int.azure.service_issues)>0 and length(last(/INT MON-CLOUD Azure subscription/int.azure.service_issues.text))>=0'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: d5938f9588a849f48ba6e3b84a527e1f
+          name: 'Azure: VMs not running list'
+          type: DEPENDENT
+          key: int.azure.vm.off.text
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.vm_off_text
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.azure.health.get
+          tags:
+            - tag: component
+              value: azure
+        - uuid: 03b682e3d70b447abf9aeb346084ef4f
+          name: 'Azure: VMs running'
+          type: DEPENDENT
+          key: int.azure.vm.running
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.vm_running
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.azure.health.get
+          tags:
+            - tag: component
+              value: azure
+        - uuid: 8e375462c6f24d9985e25128c4d3d75e
+          name: 'Azure: API errors'
+          type: DEPENDENT
+          key: int.azure.error
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.error
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.azure.health.get
+          tags:
+            - tag: component
+              value: monitoring
+          triggers:
+            - uuid: 66f7d37436de42f79c8f80eda25b3aee
+              expression: 'length(last(/INT MON-CLOUD Azure subscription/int.azure.error,#1))>0 and length(last(/INT MON-CLOUD Azure subscription/int.azure.error,#2))>0'
+              name: 'INT: Azure API access fails for {HOST.NAME}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Lighthouse delegation removed, secret expired or role missing (Integrit internal). Text in item "Azure: API errors".'
+              tags:
+                - tag: scope
+                  value: monitoring
+            - uuid: 7ce60b735cc14e76844932e8e8452517
+              expression: 'nodata(/INT MON-CLOUD Azure subscription/int.azure.error,{$INT.CLOUD.NODATA})=1'
+              name: 'INT: Azure checks return no data for {HOST.NAME}'
+              priority: AVERAGE
+              description: 'Script item times out or the external proxy is down.'
+              tags:
+                - tag: scope
+                  value: monitoring
+        - uuid: b63b85a2b06c46f6bc9f8aca272e2a76
+          name: 'Azure: optional check errors'
+          type: DEPENDENT
+          key: int.azure.errors.optional
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.optional_errors
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.azure.health.get
+          tags:
+            - tag: component
+              value: monitoring
+        - uuid: 0945baf5fa09452091e85cdb8e7990cf
+          name: 'Cost: month to date'
+          type: DEPENDENT
+          key: int.azure.cost.mtd
+          delay: '0'
+          value_type: FLOAT
+          units: '{$INT.CLOUD.CURRENCY}'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.cost_mtd
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.azure.cost.get
+          tags:
+            - tag: component
+              value: cost
+          triggers:
+            - uuid: f4297f75f30f43d9bfa776866697c3a5
+              expression: 'last(/INT MON-CLOUD Azure subscription/int.azure.cost.mtd)>{$INT.CLOUD.BUDGET} and {$INT.CLOUD.BUDGET}>0'
+              name: 'INT: Azure cost of {HOST.NAME} is over budget: {ITEM.LASTVALUE1} {$INT.CLOUD.CURRENCY}'
+              priority: AVERAGE
+              description: 'Actual cost this month exceeds {$INT.CLOUD.BUDGET}. Data lag up to 24 h.'
+              tags:
+                - tag: scope
+                  value: cost
+        - uuid: 2de1006f964a49f5a9ebbbd2658e2d40
+          name: 'Cost: month forecast'
+          type: DEPENDENT
+          key: int.azure.cost.forecast
+          delay: '0'
+          value_type: FLOAT
+          units: '{$INT.CLOUD.CURRENCY}'
+          description: 'Linear projection of month-to-date cost.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.cost_forecast
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.azure.cost.get
+          tags:
+            - tag: component
+              value: cost
+          triggers:
+            - uuid: 2b05f564361443a1a196e72bb8f95d23
+              expression: 'last(/INT MON-CLOUD Azure subscription/int.azure.cost.forecast)>{$INT.CLOUD.BUDGET} and {$INT.CLOUD.BUDGET}>0'
+              name: 'INT: Azure cost of {HOST.NAME} is forecast over budget: {ITEM.LASTVALUE1} {$INT.CLOUD.CURRENCY}'
+              priority: WARNING
+              description: 'At the current daily rate the month ends above {$INT.CLOUD.BUDGET}. Check new resources / scaling.'
+              dependencies:
+                - name: 'INT: Azure cost of {HOST.NAME} is over budget: {ITEM.LASTVALUE1} {$INT.CLOUD.CURRENCY}'
+                  expression: 'last(/INT MON-CLOUD Azure subscription/int.azure.cost.mtd)>{$INT.CLOUD.BUDGET} and {$INT.CLOUD.BUDGET}>0'
+              tags:
+                - tag: scope
+                  value: cost
+        - uuid: 7ac35bc7b2a94df9aa2dec18bb999cb6
+          name: 'Cost: yesterday'
+          type: DEPENDENT
+          key: int.azure.cost.yesterday
+          delay: '0'
+          value_type: FLOAT
+          units: '{$INT.CLOUD.CURRENCY}'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.cost_yesterday
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.azure.cost.get
+          tags:
+            - tag: component
+              value: cost
+          triggers:
+            - uuid: 597e6b1fc8b14455ad0ed0dd4ef48481
+              expression: 'last(/INT MON-CLOUD Azure subscription/int.azure.cost.yesterday)>{$INT.CLOUD.ANOMALY.FACTOR}*last(/INT MON-CLOUD Azure subscription/int.azure.cost.avg7) and last(/INT MON-CLOUD Azure subscription/int.azure.cost.yesterday)>{$INT.CLOUD.ANOMALY.MIN}'
+              name: 'INT: Azure cost anomaly in {HOST.NAME}: yesterday {ITEM.LASTVALUE1}, 7-day average {ITEM.LASTVALUE2}'
+              priority: WARNING
+              description: 'Daily cost more than {$INT.CLOUD.ANOMALY.FACTOR}x the 7-day average (runaway resource, attack, misconfigured scaling).'
+              tags:
+                - tag: scope
+                  value: cost
+        - uuid: 5722aefc02e84ce697332d6dcf1e81a4
+          name: 'Cost: 7-day daily average'
+          type: DEPENDENT
+          key: int.azure.cost.avg7
+          delay: '0'
+          value_type: FLOAT
+          units: '{$INT.CLOUD.CURRENCY}'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.cost_avg7
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.azure.cost.get
+          tags:
+            - tag: component
+              value: cost
+        - uuid: c35cc1bf18f045fc9f7cb915cd346771
+          name: 'Cost: errors'
+          type: DEPENDENT
+          key: int.azure.cost.error
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Usually the Cost Management Reader role is missing.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.optional_errors
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.azure.cost.get
+          tags:
+            - tag: component
+              value: monitoring
+          triggers:
+            - uuid: de6b6815bc144c7ba6abc6f60b82368c
+              expression: 'length(last(/INT MON-CLOUD Azure subscription/int.azure.cost.error))>0'
+              name: 'INT: Azure cost data not available for {HOST.NAME}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Cost Management Reader role missing or the subscription type does not expose costs (some CSP offers). Text in item "Cost: errors".'
+              tags:
+                - tag: scope
+                  value: monitoring
+      tags:
+        - tag: service
+          value: MON-CLOUD
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$AZURE.APP.ID}'
+          description: 'Application ID of the Integrit Azure monitoring service principal (global macro with Lighthouse).'
+        - macro: '{$AZURE.PASSWORD}'
+          type: SECRET_TEXT
+          description: 'Client secret of that service principal (global macro).'
+        - macro: '{$AZURE.PROXY}'
+        - macro: '{$AZURE.SUBSCRIPTION.ID}'
+          description: 'Customer subscription ID (host macro).'
+        - macro: '{$AZURE.TENANT.ID}'
+          description: 'With Lighthouse: the INTEGRIT tenant ID (global macro). Without: the customer tenant ID.'
+        - macro: '{$AZURE.RESOURCE.GROUP.MATCHES}'
+          value: '.*'
+          description: 'Resource groups in scope (regex).'
+        - macro: '{$AZURE.RESOURCE.GROUP.NOT.MATCHES}'
+          value: '(?i)^(dev|test|lab)-'
+          description: 'Resource groups out of scope (dev / test).'
+        - macro: '{$INT.CLOUD.ANOMALY.FACTOR}'
+          value: '2'
+        - macro: '{$INT.CLOUD.ANOMALY.MIN}'
+          value: '10'
+          description: 'Ignore anomalies below this daily amount (currency of the subscription).'
+        - macro: '{$INT.CLOUD.BUDGET}'
+          value: '0'
+          description: 'Monthly budget in the subscription currency. 0 = no budget triggers.'
+        - macro: '{$INT.CLOUD.CURRENCY}'
+          value: EUR
+        - macro: '{$INT.CLOUD.IGNORE.POWER.TAG}'
+          value: zabbix-ignore-power
+          description: 'Azure tag name marking VMs that may be stopped (schedules, dev).'
+        - macro: '{$INT.CLOUD.NODATA}'
+          value: 1h
+    - uuid: 4697ee42cc3e4a289777c0b15ce74238
+      template: 'INT MON-CLOUD Azure VM'
+      name: 'INT MON-CLOUD Azure VM'
+      description: |
+        Integrit MON-CLOUD for one important Azure VM (host per VM, {$AZURE.RESOURCE.ID} = VM resource ID). Official 'Azure
+        Virtual Machine by HTTP': availability (HIGH), CPU, disk, network. OS inside the VM: MON-SRV agent.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'Azure Virtual Machine by HTTP'
+      groups:
+        - name: Templates/Integrit/MON-CLOUD
+      tags:
+        - tag: service
+          value: MON-CLOUD
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$AZURE.VM.CPU.UTIL.CRIT}'
+          value: '95'
+          description: 'Official default 90; draft MON-SRV CPU convention.'
