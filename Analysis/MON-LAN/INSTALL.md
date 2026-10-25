@@ -8,7 +8,7 @@ Version 1.0 · Zabbix 7.0.31 · official templates `release/7.0` (commit 362508f
 |---|---|---|---|
 | Cisco Catalyst / IOS / IOS-XE switch | `INT MON-LAN Cisco IOS` | SNMP | site proxy |
 | HPE Aruba / ProCurve (ArubaOS-Switch) | `INT MON-LAN HPE Aruba` | SNMP | site proxy |
-| MikroTik CRS / CSS switch | `INT MON-LAN MikroTik` | SNMP | site proxy |
+| MikroTik CRS / CSS switch | `INT MON-LAN MikroTik` (not on a MikroTik that is the site gateway: that one gets only `INT MON-NET MikroTik`, both link `Mikrotik by SNMP` and cannot sit on one host) | SNMP | site proxy |
 | UniFi switch, TP-Link, Netgear, Zyxel, D-Link, other | `INT MON-LAN Generic SNMP` | SNMP | site proxy |
 | UniFi APs / switches / gateway (device online state, % APs offline) | `INT MON-LAN UniFi Network` (one host per UniFi site) | Agent interface = console IP (HTTPS target) | site proxy |
 | Meraki MS / MR | `INT MON-NET Meraki organization` (MON-NET) | – | external proxy |

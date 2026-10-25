@@ -90,7 +90,7 @@ zabbix_export:
           params: |
             var p = JSON.parse(value);
             if (!/^\d{4}-\d{2}-\d{2}$/.test(p.last)) {
-                throw '{$INT.SHUT.LAST.TEST} must be YYYY-MM-DD (date of the last shutdown test).';
+                throw '{\$INT.SHUT.LAST.TEST} must be YYYY-MM-DD (date of the last shutdown test).';
             }
             return Math.floor((Date.now() - Date.parse(p.last + 'T00:00:00Z')) / 86400000);
           timeout: 5s

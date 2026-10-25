@@ -49,7 +49,7 @@ zabbix_export:
 
             try {
                 if (!p.token || p.token.indexOf('{$') === 0) {
-                    throw 'Macro {$INT.ZBX.API.TOKEN} is not set.';
+                    throw 'Macro {\$INT.ZBX.API.TOKEN} is not set.';
                 }
                 var now = Math.floor(Date.now() / 1000);
                 var re = new RegExp(p.proxy_name_regex);

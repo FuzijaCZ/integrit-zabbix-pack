@@ -73,6 +73,10 @@ append the role's services inside `{$SERVICE.NAME.NOT_MATCHES}` on the host (MON
 | RDS | `TermService`, `SessionEnv`, `Tssdis`, `TSGateway`, `TermServLicensing` (those present) |
 | IIS | `W3SVC`, `WAS` |
 
+Each pack writes the service key in its own form (`service.info[X]`, `[X,]`, `["X",]`, `[X,""]`, `[X,"state"]`,
+`["X","state"]`). All of them read the service state; the different spelling only keeps the keys unique, so several packs
+(e.g. DHCP + DNS + Print on one DC) can be linked on the same host. Do not "tidy" them to one form.
+
 ## 4. Import
 
 | Rule | Update existing | Create new | Delete missing |

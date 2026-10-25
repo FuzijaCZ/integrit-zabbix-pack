@@ -192,7 +192,7 @@ zabbix_export:
 
             try {
                 if (!p.password || p.password.indexOf('{$') === 0) {
-                    throw 'Macro {$INT.CCTV.PASSWORD} is not set.';
+                    throw 'Macro {\$INT.CCTV.PASSWORD} is not set.';
                 }
                 var now = Date.now();
                 var info = isapi('GET', '/System/deviceInfo').DeviceInfo || {};

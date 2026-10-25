@@ -59,7 +59,7 @@ zabbix_export:
                 var eos = (p.eos_date || '').indexOf('{$') === 0 ? '' : p.eos_date.trim();
                 if (!eos && prod) {
                     if (!EOS.hasOwnProperty(prod)) {
-                        throw 'Product "' + prod + '" is not in the lifecycle table; set {$INT.LC.EOS.DATE} instead. Known: ' + Object.keys(EOS).join(', ');
+                        throw 'Product "' + prod + '" is not in the lifecycle table; set {\$INT.LC.EOS.DATE} instead. Known: ' + Object.keys(EOS).join(', ');
                     }
                     eos = EOS[prod];
                     out.eos_source = 'table';

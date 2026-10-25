@@ -60,9 +60,9 @@ Out of scope (done elsewhere): MON-WP, MON-DNS, MON-WEB basics.
 - Every threshold is a macro: change it on the host (or with `{$MACRO:"context"}` per item), never in the template.
 - Problems marked "close manually" in an INSTALL (security / change events) stay open until someone closes them after review.
 
-## What was not tested in the build environment
+## What was tested, and what is left for the first customer
 
-YAML of every template was validated (parses, unique UUIDs and keys, trigger references, no 7.2+ fields, names checked against the
-official `release/7.0` templates). Not run against real systems: PowerShell scripts (no Windows here), vendor APIs (Graph, ESET,
-UniFi, Azure, Hikvision ISAPI: tested with mocked responses), SNMP OIDs of vendor MIBs (QNAP, APC PDU, sensor units). Each INSTALL
-lists what to verify on the first customer.
+Every template was imported and linked on a real Zabbix 7.0.31 (alone and in realistic stacks), and all JavaScript ran in the
+server's own engine. Not run against real systems: PowerShell scripts (no Windows here), vendor APIs with real customer data (Graph,
+ESET, UniFi, Azure, Hikvision ISAPI), SNMP OIDs of vendor MIBs (QNAP, APC PDU, sensor units). Results and the run sheet for the first
+customer: [`PILOT.md`](PILOT.md).
