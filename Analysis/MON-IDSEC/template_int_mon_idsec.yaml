@@ -1,0 +1,987 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 0e91516969de4dc0a26520dec346be24
+      name: Templates/Integrit/MON-IDSEC
+  templates:
+    - uuid: e3592ea87f524254ba81168a2ada21e1
+      template: 'INT MON-IDSEC Entra ID'
+      name: 'INT MON-IDSEC Entra ID'
+      description: |
+        Integrit MON-IDSEC: Entra ID identity security events (extension of MON-M365), external proxy, Microsoft Graph.
+        Break-glass sign-ins, risky users / detections (P2), privileged role assignments, Conditional Access changes, security
+        defaults off, high-privilege app consents, new app credentials, sign-ins from outside the country allow-list and legacy
+        authentication (P1), external inbox forwarding rules. Linked on the MON-M365 tenant host, same {$MS365.*} credentials.
+        Not a SOC: alerts and reports, no investigation. Event problems stay open until closed manually.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-IDSEC
+      items:
+        - uuid: 5d9d273585ff4123b2dea7c5568ddff0
+          name: 'Identity security raw'
+          type: SCRIPT
+          key: int.idsec.get
+          delay: 5m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Graph check every 5 min of a fixed 5-minute window delayed by {$INT.IDSEC.LAG} min.'
+          params: |
+            var p = JSON.parse(value);
+            var G = 'https://graph.microsoft.com/v1.0';
+            var out = {error: '', optional_errors: ''};
+            var token;
+
+            function request(method, url, body) {
+                var req = new HttpRequest();
+                if (p.http_proxy && p.http_proxy.indexOf('{$') !== 0) {
+                    req.setProxy(p.http_proxy);
+                }
+                req.addHeader(token ? 'Authorization: Bearer ' + token : 'Content-Type: application/x-www-form-urlencoded');
+                if (token) {
+                    req.addHeader('ConsistencyLevel: eventual');
+                }
+                var resp = method === 'POST' ? req.post(url, body) : req.get(url);
+                var st = req.getStatus();
+                if (st < 200 || st >= 300) {
+                    throw 'HTTP ' + st + ' ' + url.replace(/^https:\/\/[^/]+/, '').replace(/\?.*$/, '') + ': ' + String(resp).substring(0, 120);
+                }
+                return resp ? JSON.parse(resp) : {};
+            }
+
+            // All pages of a collection, capped (a 5-minute window never needs more in SMB tenants).
+            function list(url, maxPages) {
+                var res = [], n = 0;
+                while (url && n < (maxPages || 5)) {
+                    var r = request('GET', url);
+                    res = res.concat(r.value || []);
+                    url = r['@odata.nextLink'];
+                    n++;
+                }
+                return res;
+            }
+
+            // Optional checks (licence / permission dependent) must not break the required ones.
+            function optional(name, fn) {
+                try {
+                    fn();
+                }
+                catch (e) {
+                    out.optional_errors += (out.optional_errors ? '; ' : '') + name + ': ' + String(e).substring(0, 150);
+                }
+            }
+
+            function iso(t) {
+                return new Date(t * 1000).toISOString().replace(/\.\d+Z$/, 'Z');
+            }
+
+            function short(arr) {
+                var s = arr.slice(0, 5).join('; ');
+                return (arr.length > 5 ? arr.length + ' events: ' : '') + s.substring(0, 240);
+            }
+
+            function prop(t, name) {
+                var v = '';
+                (t.modifiedProperties || []).forEach(function (m) {
+                    if (m.displayName === name) {
+                        v = String(m.newValue || '').replace(/^"|"$/g, '');
+                    }
+                });
+                return v;
+            }
+
+            function actor(a) {
+                var i = a.initiatedBy || {};
+                return (i.user && i.user.userPrincipalName) || (i.app && i.app.displayName) || '?';
+            }
+
+            try {
+                ['tenant_id', 'app_id', 'password'].forEach(function (f) {
+                    if (!p[f] || p[f].indexOf('{$') === 0) {
+                        throw 'Parameter ' + f + ' is not set (host macro).';
+                    }
+                });
+                var t = request('POST', 'https://login.microsoftonline.com/' + encodeURIComponent(p.tenant_id) + '/oauth2/v2.0/token',
+                    'grant_type=client_credentials&scope=' + encodeURIComponent('https://graph.microsoft.com/.default') +
+                    '&client_id=' + encodeURIComponent(p.app_id) + '&client_secret=' + encodeURIComponent(p.password));
+                token = t.access_token;
+
+                // Fixed 5-minute buckets, delayed by the log latency: every event falls in exactly one run (no de-duplication needed).
+                var step = 300, lag = parseInt(p.lag_min, 10) * 60;
+                var till = Math.floor(Date.now() / 1000 / step) * step - lag, from = till - step;
+                var win = 'ge ' + iso(from) + ' and activityDateTime lt ' + iso(till);
+
+                // Directory audit (any licence): role assignments, CA policies, consents, service principal credentials.
+                var audits = list(G + '/auditLogs/directoryAudits?$filter=' + encodeURIComponent('activityDateTime ' + win), 10);
+                var ga = [], role = [], ca = [], consent = [], cred = [];
+                var gaRe = new RegExp(p.role_high_regex, 'i'), privRe = new RegExp(p.consent_high_regex, 'i');
+                audits.forEach(function (a) {
+                    var n = a.activityDisplayName, target = (a.targetResources || [])[0] || {};
+                    var who = actor(a), what = target.userPrincipalName || target.displayName || '';
+                    if (/^Add (eligible )?member to role( in PIM completed \((permanent|timebound)\))?$/.test(n)) {
+                        var r = prop(target, 'Role.DisplayName') || ((a.targetResources || [])[1] || {}).displayName || '';
+                        (gaRe.test(r) ? ga : role).push(r + ' -> ' + what + ' by ' + who);
+                    }
+                    else if (/conditional access policy$/i.test(n)) {
+                        ca.push(n + ': ' + what + ' by ' + who);
+                    }
+                    else if (n === 'Consent to application') {
+                        var perms = JSON.stringify(target.modifiedProperties || []);
+                        if (privRe.test(perms)) {
+                            consent.push(what + ' by ' + who);
+                        }
+                    }
+                    else if (/^(Add service principal credentials|Update application . Certificates and secrets management)/.test(n)) {
+                        cred.push(what + ' by ' + who);
+                    }
+                });
+                out.role_ga = ga.length; out.role_ga_text = short(ga);
+                out.role_other = role.length; out.role_other_text = short(role);
+                out.ca_changes = ca.length; out.ca_text = short(ca);
+                out.consents = consent.length; out.consents_text = short(consent);
+                out.sp_creds = cred.length; out.sp_creds_text = short(cred);
+
+                optional('security defaults', function () {
+                    out.security_defaults = request('GET', G + '/policies/identitySecurityDefaultsEnforcementPolicy').isEnabled ? 1 : 0;
+                });
+
+                if (p.p1 === '1') {
+                    optional('sign-ins', function () {
+                        var sf = 'createdDateTime ge ' + iso(from) + ' and createdDateTime lt ' + iso(till) + ' and status/errorCode eq 0';
+                        var signins = list(G + '/auditLogs/signIns?$top=999&$select=userPrincipalName,ipAddress,location,clientAppUsed,createdDateTime' +
+                            '&$filter=' + encodeURIComponent(sf), 10);
+                        var bg = (p.breakglass || '').toLowerCase().split(',').filter(function (x) { return x.trim(); });
+                        var countries = (p.countries || '').toUpperCase().split(',');
+                        var legacyRe = new RegExp(p.legacy_regex, 'i');
+                        var b = [], c = [], l = [];
+                        signins.forEach(function (s) {
+                            var upn = String(s.userPrincipalName || '').toLowerCase(), cc = ((s.location || {}).countryOrRegion || '').toUpperCase();
+                            var line = upn + ' from ' + s.ipAddress + (cc ? ' (' + cc + ')' : '');
+                            if (bg.indexOf(upn) >= 0) {
+                                b.push(line);
+                            }
+                            if (cc && countries.indexOf(cc) < 0 && (p.country_ignore === '' || !new RegExp(p.country_ignore, 'i').test(upn))) {
+                                c.push(line);
+                            }
+                            if (legacyRe.test(s.clientAppUsed || '')) {
+                                l.push(line + ' via ' + s.clientAppUsed);
+                            }
+                        });
+                        out.breakglass = b.length; out.breakglass_text = short(b);
+                        out.foreign = c.length; out.foreign_text = short(c);
+                        out.legacy = l.length; out.legacy_text = short(l);
+                    });
+                }
+
+                if (p.p2 === '1') {
+                    optional('risk', function () {
+                        var ru = list(G + '/identityProtection/riskyUsers?$filter=' + encodeURIComponent("riskState eq 'atRisk' and riskLevel eq 'high'"), 3);
+                        out.risky_high = ru.length;
+                        out.risky_high_text = short(ru.map(function (u) { return u.userPrincipalName; }));
+                        var rd = list(G + '/identityProtection/riskDetections?$filter=' + encodeURIComponent(
+                            "riskLevel eq 'high' and detectedDateTime ge " + iso(from) + ' and detectedDateTime lt ' + iso(till)), 3);
+                        out.risk_detections = rd.length;
+                        out.risk_detections_text = short(rd.map(function (d) { return d.userPrincipalName + ': ' + d.riskEventType + ' from ' + d.ipAddress; }));
+                    });
+                }
+            }
+            catch (e) {
+                out.error = String(e).substring(0, 500);
+            }
+            return JSON.stringify(out);
+          timeout: 60s
+          parameters:
+            - name: app_id
+              value: '{$MS365.APP.ID}'
+            - name: breakglass
+              value: '{$INT.IDSEC.BREAKGLASS}'
+            - name: consent_high_regex
+              value: '{$INT.IDSEC.CONSENT.HIGH}'
+            - name: countries
+              value: '{$INT.IDSEC.COUNTRIES}'
+            - name: country_ignore
+              value: '{$INT.IDSEC.COUNTRY.IGNORE}'
+            - name: http_proxy
+              value: '{$MS365.HTTP.PROXY}'
+            - name: lag_min
+              value: '{$INT.IDSEC.LAG}'
+            - name: legacy_regex
+              value: '{$INT.IDSEC.LEGACY}'
+            - name: p1
+              value: '{$INT.IDSEC.P1}'
+            - name: p2
+              value: '{$INT.IDSEC.P2}'
+            - name: password
+              value: '{$MS365.PASSWORD}'
+            - name: role_high_regex
+              value: '{$INT.IDSEC.ROLE.HIGH}'
+            - name: tenant_id
+              value: '{$MS365.TENANT.ID}'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: a6a7c12c703c48f58505f7392e13f5a6
+          name: 'Mail forwarding rules raw'
+          type: SCRIPT
+          key: int.idsec.fwd.get
+          delay: 12h
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Inbox rules of all enabled users with a mailbox (MailboxSettings.Read), twice a day.'
+          params: |
+            var p = JSON.parse(value);
+            var G = 'https://graph.microsoft.com/v1.0';
+            var out = {error: '', fwd: 0, fwd_text: '', checked: 0};
+            var token;
+
+            function request(url, body) {
+                var req = new HttpRequest();
+                if (p.http_proxy && p.http_proxy.indexOf('{$') !== 0) {
+                    req.setProxy(p.http_proxy);
+                }
+                req.addHeader(token ? 'Authorization: Bearer ' + token : 'Content-Type: application/x-www-form-urlencoded');
+                var resp = body ? req.post(url, body) : req.get(url);
+                return {status: req.getStatus(), body: resp ? JSON.parse(resp) : {}};
+            }
+
+            try {
+                ['tenant_id', 'app_id', 'password'].forEach(function (f) {
+                    if (!p[f] || p[f].indexOf('{$') === 0) {
+                        throw 'Parameter ' + f + ' is not set (host macro).';
+                    }
+                });
+                token = request('https://login.microsoftonline.com/' + encodeURIComponent(p.tenant_id) + '/oauth2/v2.0/token',
+                    'grant_type=client_credentials&scope=' + encodeURIComponent('https://graph.microsoft.com/.default') +
+                    '&client_id=' + encodeURIComponent(p.app_id) + '&client_secret=' + encodeURIComponent(p.password)).body.access_token;
+                if (!token) {
+                    throw 'Token request failed.';
+                }
+
+                // Internal = any verified domain of the tenant, plus the allow-list macro (partner domains with agreed forwarding).
+                var d = request(G + '/domains?$select=id,isVerified');
+                if (d.status !== 200) {
+                    throw 'GET /domains HTTP ' + d.status;
+                }
+                var internal = (d.body.value || []).filter(function (x) { return x.isVerified; }).map(function (x) { return x.id.toLowerCase(); })
+                    .concat((p.allow || '').toLowerCase().split(',').filter(function (x) { return x.trim(); }));
+
+                var url = G + '/users?$select=id,userPrincipalName,mail&$filter=' + encodeURIComponent('accountEnabled eq true') + '&$top=999';
+                var users = [];
+                while (url && users.length < parseInt(p.max_users, 10)) {
+                    var r = request(url);
+                    if (r.status !== 200) {
+                        throw 'GET /users HTTP ' + r.status;
+                    }
+                    users = users.concat((r.body.value || []).filter(function (u) { return u.mail; }));
+                    url = r.body['@odata.nextLink'];
+                }
+
+                var hits = [];
+                users.slice(0, parseInt(p.max_users, 10)).forEach(function (u) {
+                    var rr = request(G + '/users/' + u.id + '/mailFolders/inbox/messageRules');
+                    if (rr.status === 403) {
+                        throw 'MailboxSettings.Read permission missing (HTTP 403).';
+                    }
+                    if (rr.status !== 200) {
+                        return; // no mailbox / mailbox on-prem
+                    }
+                    out.checked++;
+                    (rr.body.value || []).forEach(function (rule) {
+                        if (!rule.isEnabled || !rule.actions) {
+                            return;
+                        }
+                        var a = rule.actions;
+                        [].concat(a.forwardTo || [], a.forwardAsAttachmentTo || [], a.redirectTo || []).forEach(function (rcp) {
+                            var addr = String((rcp.emailAddress || {}).address || '').toLowerCase();
+                            var dom = addr.split('@')[1] || '';
+                            if (dom && internal.indexOf(dom) < 0) {
+                                hits.push(u.userPrincipalName + ' -> ' + addr + ' (' + rule.displayName + ')');
+                            }
+                        });
+                    });
+                });
+                out.fwd = hits.length;
+                out.fwd_text = hits.slice(0, 5).join('; ').substring(0, 240);
+            }
+            catch (e) {
+                out.error = String(e).substring(0, 500);
+            }
+            return JSON.stringify(out);
+          timeout: 60s
+          parameters:
+            - name: allow
+              value: '{$INT.IDSEC.FWD.ALLOW}'
+            - name: app_id
+              value: '{$MS365.APP.ID}'
+            - name: http_proxy
+              value: '{$MS365.HTTP.PROXY}'
+            - name: max_users
+              value: '{$INT.IDSEC.FWD.MAXUSERS}'
+            - name: password
+              value: '{$MS365.PASSWORD}'
+            - name: tenant_id
+              value: '{$MS365.TENANT.ID}'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 0a744cb9949f432abee7e39305e7059c
+          name: 'Sign-ins: break-glass accounts'
+          type: DEPENDENT
+          key: int.idsec.breakglass
+          delay: '0'
+          description: 'Events in the checked 5-minute window.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.breakglass
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+          triggers:
+            - uuid: a44eac8d5cf94d87a9cc6e84b8a7ad9e
+              expression: 'last(/INT MON-IDSEC Entra ID/int.idsec.breakglass)>0 and length(last(/INT MON-IDSEC Entra ID/int.idsec.breakglass.text))>0'
+              recovery_mode: NONE
+              name: 'INT: Break-glass account signed in'
+              event_name: 'INT: Break-glass account signed in: {ITEM.LASTVALUE2}'
+              priority: DISASTER
+              description: 'Any sign-in of an emergency account ({$INT.IDSEC.BREAKGLASS}) is either a real emergency or a compromise. Call the customer now. Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 4b7561840b944a0ab4410f2e6ca2ba0d
+          name: 'Sign-ins: break-glass accounts: details'
+          type: DEPENDENT
+          key: int.idsec.breakglass.text
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.breakglass_text
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+        - uuid: c165d9e1a2b1432389ad3b2e28e4c54e
+          name: 'Risk: high-risk users'
+          type: DEPENDENT
+          key: int.idsec.risky_high
+          delay: '0'
+          description: 'Current count.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.risky_high
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+          triggers:
+            - uuid: d3a969e441d4443f9558980f3ecf7526
+              expression: 'last(/INT MON-IDSEC Entra ID/int.idsec.risky_high)>0 and length(last(/INT MON-IDSEC Entra ID/int.idsec.risky_high.text))>0'
+              name: 'INT: Entra ID flags users as high risk'
+              event_name: 'INT: Entra ID flags users as high risk: {ITEM.LASTVALUE2}'
+              priority: HIGH
+              description: 'Entra ID Protection rates these users high risk (leaked credentials, impossible travel, ...). Reset password, revoke sessions, confirm safe. Resolves when no user is at high risk.'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 6c7d8c8dd307482b817ba42ce0e6c17b
+          name: 'Risk: high-risk users: details'
+          type: DEPENDENT
+          key: int.idsec.risky_high.text
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.risky_high_text
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+        - uuid: a52b4d0c421c4f639890f811b65b0b0b
+          name: 'Risk: high risk detections'
+          type: DEPENDENT
+          key: int.idsec.risk_detections
+          delay: '0'
+          description: 'Events in the checked 5-minute window.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.risk_detections
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+          triggers:
+            - uuid: ef4a0598c1d049bbb8a18e341cecee5c
+              expression: 'last(/INT MON-IDSEC Entra ID/int.idsec.risk_detections)>0 and length(last(/INT MON-IDSEC Entra ID/int.idsec.risk_detections.text))>0'
+              recovery_mode: NONE
+              name: 'INT: High risk sign-in detection'
+              event_name: 'INT: High risk sign-in detection: {ITEM.LASTVALUE2}'
+              priority: HIGH
+              description: 'Entra ID Protection high-risk detection in the window. Investigate the user. Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 55024f22d7f74c13bc93956ed92b3f58
+          name: 'Risk: high risk detections: details'
+          type: DEPENDENT
+          key: int.idsec.risk_detections.text
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.risk_detections_text
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+        - uuid: 4c686590f43542be82733670f40204dc
+          name: 'Roles: highly privileged role assigned'
+          type: DEPENDENT
+          key: int.idsec.role_ga
+          delay: '0'
+          description: 'Events in the checked 5-minute window.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.role_ga
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+          triggers:
+            - uuid: b823f28683064c25af2ce07c99d20a50
+              expression: 'last(/INT MON-IDSEC Entra ID/int.idsec.role_ga)>0 and length(last(/INT MON-IDSEC Entra ID/int.idsec.role_ga.text))>0'
+              recovery_mode: NONE
+              name: 'INT: Highly privileged role assigned'
+              event_name: 'INT: Highly privileged role assigned: {ITEM.LASTVALUE2}'
+              priority: HIGH
+              description: 'Global Administrator or another role in {$INT.IDSEC.ROLE.HIGH} was assigned. Confirm against a ticket. Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 4d98b65ed99349369dc43de21c5aeb69
+          name: 'Roles: highly privileged role assigned: details'
+          type: DEPENDENT
+          key: int.idsec.role_ga.text
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.role_ga_text
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+        - uuid: 4859b01fcb244806bff4407393fc6273
+          name: 'Roles: other admin role assigned'
+          type: DEPENDENT
+          key: int.idsec.role_other
+          delay: '0'
+          description: 'Events in the checked 5-minute window.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.role_other
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+          triggers:
+            - uuid: 5ef93fadffef4e698d38d22037b981a3
+              expression: 'last(/INT MON-IDSEC Entra ID/int.idsec.role_other)>0 and length(last(/INT MON-IDSEC Entra ID/int.idsec.role_other.text))>0'
+              recovery_mode: NONE
+              name: 'INT: Admin role assigned'
+              event_name: 'INT: Admin role assigned: {ITEM.LASTVALUE2}'
+              priority: AVERAGE
+              description: 'Directory role assigned. Confirm against a ticket. Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: bb75590d69e6439aa72473db27cdbbda
+          name: 'Roles: other admin role assigned: details'
+          type: DEPENDENT
+          key: int.idsec.role_other.text
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.role_other_text
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+        - uuid: e6d1a1fd8a99476b859e77ba0c4577cc
+          name: 'Policies: Conditional Access changes'
+          type: DEPENDENT
+          key: int.idsec.ca_changes
+          delay: '0'
+          description: 'Events in the checked 5-minute window.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.ca_changes
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+          triggers:
+            - uuid: 2e7f4c776b9d4af7ba9ee7f8ed4319a6
+              expression: 'last(/INT MON-IDSEC Entra ID/int.idsec.ca_changes)>0 and length(last(/INT MON-IDSEC Entra ID/int.idsec.ca_changes.text))>0'
+              recovery_mode: NONE
+              name: 'INT: Conditional Access policy changed'
+              event_name: 'INT: Conditional Access policy changed: {ITEM.LASTVALUE2}'
+              priority: AVERAGE
+              description: 'Added, changed or deleted CA policy (attackers weaken MFA rules). Confirm against a ticket. Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 27de93b800c149b2bea8fb216cfa0319
+          name: 'Policies: Conditional Access changes: details'
+          type: DEPENDENT
+          key: int.idsec.ca_changes.text
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.ca_changes_text
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+        - uuid: 55c470ed6edc47a8b67d65825d5af4e3
+          name: 'Apps: high-privilege consents'
+          type: DEPENDENT
+          key: int.idsec.consents
+          delay: '0'
+          description: 'Events in the checked 5-minute window.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.consents
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+          triggers:
+            - uuid: 0f465cfd2ecf4f5b867183d9b77270b7
+              expression: 'last(/INT MON-IDSEC Entra ID/int.idsec.consents)>0 and length(last(/INT MON-IDSEC Entra ID/int.idsec.consents.text))>0'
+              recovery_mode: NONE
+              name: 'INT: Consent granted to an app with mail / file / directory permissions'
+              event_name: 'INT: Consent granted to an app with mail / file / directory permissions: {ITEM.LASTVALUE2}'
+              priority: AVERAGE
+              description: 'Possible OAuth consent phishing. Check the app in Enterprise applications and revoke if unknown. Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: fc55e74ba80d4e3fbc0a0204c35d86d8
+          name: 'Apps: high-privilege consents: details'
+          type: DEPENDENT
+          key: int.idsec.consents.text
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.consents_text
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+        - uuid: 4c59081b08fe43c7a5c44032e91e37e7
+          name: 'Apps: new service principal credentials'
+          type: DEPENDENT
+          key: int.idsec.sp_creds
+          delay: '0'
+          description: 'Events in the checked 5-minute window.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.sp_creds
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+          triggers:
+            - uuid: 5cad5bbeddd749f8864d6c6426b083fe
+              expression: 'last(/INT MON-IDSEC Entra ID/int.idsec.sp_creds)>0 and length(last(/INT MON-IDSEC Entra ID/int.idsec.sp_creds.text))>0'
+              recovery_mode: NONE
+              name: 'INT: New credentials added to an application'
+              event_name: 'INT: New credentials added to an application: {ITEM.LASTVALUE2}'
+              priority: WARNING
+              description: 'A secret or certificate was added to an app / service principal (persistence technique). Confirm. Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 1fb4dca026b2479c8b61e00d6c7abc65
+          name: 'Apps: new service principal credentials: details'
+          type: DEPENDENT
+          key: int.idsec.sp_creds.text
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.sp_creds_text
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+        - uuid: 0aa3c04a8e1c4d4db7c8e3525ab01073
+          name: 'Sign-ins: from countries outside the allow-list'
+          type: DEPENDENT
+          key: int.idsec.foreign
+          delay: '0'
+          description: 'Events in the checked 5-minute window.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.foreign
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+          triggers:
+            - uuid: 5458d386e62541e98ab14cf8eaad1db4
+              expression: 'last(/INT MON-IDSEC Entra ID/int.idsec.foreign)>0 and length(last(/INT MON-IDSEC Entra ID/int.idsec.foreign.text))>0'
+              recovery_mode: NONE
+              name: 'INT: Successful sign-in from outside {$INT.IDSEC.COUNTRIES}'
+              event_name: 'INT: Successful sign-in from outside {$INT.IDSEC.COUNTRIES}: {ITEM.LASTVALUE2}'
+              priority: AVERAGE
+              description: 'Travel, VPN egress or a compromised account. Confirm with the user. Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 0fc6ac12d96844f08694dce7a5c5e8bb
+          name: 'Sign-ins: from countries outside the allow-list: details'
+          type: DEPENDENT
+          key: int.idsec.foreign.text
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.foreign_text
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+        - uuid: b888573ee5cf4528b29a8d0d58d873db
+          name: 'Sign-ins: legacy authentication'
+          type: DEPENDENT
+          key: int.idsec.legacy
+          delay: '0'
+          description: 'Events in the checked 5-minute window.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.legacy
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+          triggers:
+            - uuid: ff07971f4b2a4e3e80793b63392bb24e
+              expression: 'last(/INT MON-IDSEC Entra ID/int.idsec.legacy)>0 and length(last(/INT MON-IDSEC Entra ID/int.idsec.legacy.text))>0'
+              recovery_mode: NONE
+              name: 'INT: Successful legacy authentication sign-in'
+              event_name: 'INT: Successful legacy authentication sign-in: {ITEM.LASTVALUE2}'
+              priority: WARNING
+              description: 'IMAP / POP / SMTP AUTH / ActiveSync basic sign-ins bypass MFA. Block legacy auth with Conditional Access. Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 032df647bd9f470eb2ac48397dd6327c
+          name: 'Sign-ins: legacy authentication: details'
+          type: DEPENDENT
+          key: int.idsec.legacy.text
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.legacy_text
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+        - uuid: 5a2acd8b7383475792d086f2a15c43b0
+          name: 'Policies: security defaults enabled'
+          type: DEPENDENT
+          key: int.idsec.security_defaults
+          delay: '0'
+          description: '1 enabled, 0 disabled (tenants with Conditional Access have it disabled on purpose).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.security_defaults
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: identity
+          triggers:
+            - uuid: e7850fcfb3444f2b8df66b4993b9b59b
+              expression: 'last(/INT MON-IDSEC Entra ID/int.idsec.security_defaults,#1)=0 and last(/INT MON-IDSEC Entra ID/int.idsec.security_defaults,#2)=1'
+              recovery_mode: NONE
+              name: 'INT: Security defaults were switched off'
+              priority: AVERAGE
+              description: 'Baseline MFA protection removed. OK only if Conditional Access replaced it. Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: c4adb7dd332541f7ac7899694aa48580
+          name: 'Graph: errors'
+          type: DEPENDENT
+          key: int.idsec.error
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.error
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: monitoring
+          triggers:
+            - uuid: fa79cc3261e34dd5a54d4630dca56bb8
+              expression: 'length(last(/INT MON-IDSEC Entra ID/int.idsec.error,#1))>0 and length(last(/INT MON-IDSEC Entra ID/int.idsec.error,#2))>0'
+              name: 'INT: Identity security checks fail'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Token, consent or permission problem (Integrit internal). Text in item "Graph: errors".'
+              tags:
+                - tag: scope
+                  value: monitoring
+            - uuid: 4076e08b847540eb95a7a4489c0f59f5
+              expression: 'nodata(/INT MON-IDSEC Entra ID/int.idsec.error,{$INT.IDSEC.NODATA})=1'
+              name: 'INT: Identity security checks return no data'
+              priority: AVERAGE
+              description: 'Script item times out or the external proxy is down.'
+              tags:
+                - tag: scope
+                  value: monitoring
+        - uuid: 0db0b907b1a74317886a4387f20633d2
+          name: 'Graph: optional check errors'
+          type: DEPENDENT
+          key: int.idsec.errors.optional
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Checks that need Entra ID P1/P2 or extra permissions. Not alerted; fix the licence flag macros.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.optional_errors
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.get
+          tags:
+            - tag: component
+              value: monitoring
+        - uuid: b835e666284d417d8cf2bcfd5be57700
+          name: 'Mail: external forwarding rules'
+          type: DEPENDENT
+          key: int.idsec.fwd
+          delay: '0'
+          description: 'Enabled inbox rules forwarding / redirecting outside the tenant domains and {$INT.IDSEC.FWD.ALLOW}.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.fwd
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.fwd.get
+          tags:
+            - tag: component
+              value: mail
+          triggers:
+            - uuid: e31409610d5c4717bdd30c10449dc959
+              expression: 'last(/INT MON-IDSEC Entra ID/int.idsec.fwd)>0 and length(last(/INT MON-IDSEC Entra ID/int.idsec.fwd.text))>=0'
+              name: 'INT: Inbox rule forwards mail outside the organisation'
+              opdata: '{ITEM.LASTVALUE2}'
+              priority: HIGH
+              description: 'Classic sign of a compromised mailbox (invoice fraud). Details in item "Mail: external forwarding rules details". Agreed forwarding: add the domain to {$INT.IDSEC.FWD.ALLOW}.'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 983134c826b042e283e5a1cdf40325c6
+          name: 'Mail: external forwarding rules details'
+          type: DEPENDENT
+          key: int.idsec.fwd.text
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.fwd_text
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.fwd.get
+          tags:
+            - tag: component
+              value: mail
+        - uuid: 24a260ab0e4e44fa94459045b7604a06
+          name: 'Mail: forwarding check error'
+          type: DEPENDENT
+          key: int.idsec.fwd.error
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.error
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.fwd.get
+          tags:
+            - tag: component
+              value: monitoring
+          triggers:
+            - uuid: df102c4cab914b87ab0320482264954d
+              expression: 'length(last(/INT MON-IDSEC Entra ID/int.idsec.fwd.error))>0'
+              name: 'INT: Mail forwarding rule check fails'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Usually MailboxSettings.Read not consented. Text in item "Mail: forwarding check error".'
+              tags:
+                - tag: scope
+                  value: monitoring
+        - uuid: e5eea0f300f84b4abb577840db2498dc
+          name: 'Mail: mailboxes checked'
+          type: DEPENDENT
+          key: int.idsec.fwd.checked
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.checked
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.idsec.fwd.get
+          tags:
+            - tag: component
+              value: mail
+      tags:
+        - tag: service
+          value: MON-IDSEC
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.IDSEC.BREAKGLASS}'
+          description: 'Comma list of break-glass account UPNs, e.g. bg01@acme.onmicrosoft.com,bg02@acme.onmicrosoft.com.'
+        - macro: '{$INT.IDSEC.CONSENT.HIGH}'
+          value: '(Mail\.|Files\.|Sites\.|Directory\.ReadWrite|User\.ReadWrite\.All|full_access_as_app|RoleManagement|Application\.ReadWrite)'
+          description: 'Regex of permissions that make a consent high-privilege.'
+        - macro: '{$INT.IDSEC.COUNTRIES}'
+          value: 'CZ,SK'
+          description: 'Allowed sign-in countries (ISO 3166 alpha-2, comma list).'
+        - macro: '{$INT.IDSEC.COUNTRY.IGNORE}'
+          description: 'Regex of UPNs excluded from the country check (frequent travellers). Empty = none.'
+        - macro: '{$INT.IDSEC.FWD.ALLOW}'
+          description: 'Comma list of external domains with agreed forwarding (e.g. the accountant). Empty = none.'
+        - macro: '{$INT.IDSEC.FWD.MAXUSERS}'
+          value: '500'
+        - macro: '{$INT.IDSEC.LAG}'
+          value: '15'
+          description: 'Minutes the checked window lags behind now (Entra log latency).'
+        - macro: '{$INT.IDSEC.LEGACY}'
+          value: '^(Authenticated SMTP|AutoDiscover|Exchange ActiveSync|Exchange Web Services|IMAP4|MAPI Over HTTP|Offline Address Book|Other clients|Outlook Anywhere.*|POP3|Reporting Web Services|Universal Outlook)$'
+          description: 'clientAppUsed values counted as legacy authentication.'
+        - macro: '{$INT.IDSEC.NODATA}'
+          value: 30m
+        - macro: '{$INT.IDSEC.P1}'
+          value: '1'
+          description: '1 = tenant has Entra ID P1 (Business Premium, E3): sign-in checks run.'
+        - macro: '{$INT.IDSEC.P2}'
+          value: '0'
+          description: '1 = tenant has Entra ID P2 (E5, add-on): risk checks run.'
+        - macro: '{$INT.IDSEC.ROLE.HIGH}'
+          value: '^(Global Administrator|Privileged Role Administrator|Privileged Authentication Administrator|Security Administrator|Exchange Administrator|SharePoint Administrator|User Administrator|Application Administrator|Cloud Application Administrator|Conditional Access Administrator)$'
+          description: 'Roles alerted as HIGH; other roles AVERAGE.'
+        - macro: '{$MS365.APP.ID}'
+          description: 'Same value as for MON-M365 (set on the tenant host).'
+        - macro: '{$MS365.HTTP.PROXY}'
+        - macro: '{$MS365.PASSWORD}'
+          type: SECRET_TEXT
+          description: 'Same value as for MON-M365 (set on the tenant host).'
+        - macro: '{$MS365.TENANT.ID}'
+          description: 'Same value as for MON-M365 (set on the tenant host).'
