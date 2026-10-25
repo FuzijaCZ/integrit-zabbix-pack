@@ -1,0 +1,584 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 181fd4f24c0d4d729b50e8bd6b638487
+      name: Templates/Integrit/MON-NAS
+  templates:
+    - uuid: df99bfd8b33c4731853b1795999d9f4a
+      template: 'INT MON-NAS Synology DSM'
+      name: 'INT MON-NAS Synology DSM'
+      description: |
+        Integrit MON-NAS template for Synology DiskStation / RackStation with DSM 7.x (SNMPv3, site proxy).
+        No official Zabbix 7.0 template exists. Uses SYNOLOGY-SYSTEM-MIB, SYNOLOGY-DISK-MIB, SYNOLOGY-RAID-MIB
+        (1.3.6.1.4.1.6574) and HOST-RESOURCES-MIB for volume capacity.
+        Storage pool degraded/crashed DISASTER, rebuild WARNING, disk failed / failing HIGH, disk health warning AVERAGE,
+        volume 85 % AVERAGE / 95 % HIGH / full in < 14 days AVERAGE, PSU / fan / system failure HIGH, temperature AVERAGE,
+        DSM update available WARNING, NAS unreachable HIGH.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-NAS
+      items:
+        - uuid: 4ea2efb15d0a4b7c975ae4a8f4567a10
+          name: 'Synology: CPU fan status'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.6574.1.4.2.0]'
+          key: 'syno.fan.cpu[cpuFanStatus.0]'
+          valuemap:
+            name: 'Synology normal/failed'
+          tags:
+            - tag: component
+              value: hardware
+          triggers:
+            - uuid: baaba6814a8f42d3ace000509c3659c6
+              expression: 'last(/INT MON-NAS Synology DSM/syno.fan.cpu[cpuFanStatus.0])=2'
+              name: 'INT: Synology CPU fan failed'
+              priority: HIGH
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: a25a249f23e54dfd880927677244aa35
+          name: 'Synology: Model'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.6574.1.5.1.0]'
+          key: 'syno.model[modelName.0]'
+          delay: 1h
+          value_type: CHAR
+          trends: '0'
+          inventory_link: MODEL
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: component
+              value: system
+        - uuid: efa9171e36dc4a1da9d57b4340747ccd
+          name: 'Synology: Power status'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.6574.1.3.0]'
+          key: 'syno.power[powerStatus.0]'
+          valuemap:
+            name: 'Synology normal/failed'
+          tags:
+            - tag: component
+              value: hardware
+          triggers:
+            - uuid: 3082041c2c28454cab25e6cf3a1b8dd2
+              expression: 'last(/INT MON-NAS Synology DSM/syno.power[powerStatus.0])=2'
+              name: 'INT: Synology power supply failed'
+              priority: HIGH
+              description: 'A power supply (or redundant PSU) reports failure.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 666e7de5b73d4745a3a3cf8c1f59f659
+          name: 'Synology: DSM version'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.6574.1.5.3.0]'
+          key: 'syno.dsm.version[version.0]'
+          delay: 1h
+          value_type: CHAR
+          trends: '0'
+          inventory_link: OS
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: component
+              value: system
+        - uuid: 538cc55f42f64e5f8488643c3e2ec9da
+          name: 'Synology: DSM update available'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.6574.1.5.4.0]'
+          key: 'syno.dsm.upgrade[upgradeAvailable.0]'
+          delay: 6h
+          valuemap:
+            name: 'Synology upgrade available'
+          tags:
+            - tag: component
+              value: system
+          triggers:
+            - uuid: 61bff9f638514c53aec2137097273eeb
+              expression: 'min(/INT MON-NAS Synology DSM/syno.dsm.upgrade[upgradeAvailable.0],{$INT.NAS.UPDATE.PENDING})=1 and max(/INT MON-NAS Synology DSM/syno.dsm.upgrade[upgradeAvailable.0],{$INT.NAS.UPDATE.PENDING})=1'
+              name: 'INT: Synology DSM update available for {$INT.NAS.UPDATE.PENDING}'
+              priority: WARNING
+              description: 'DSM updates often fix exploited vulnerabilities. Plan the update in the maintenance window.'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: bdbdc51a77454c4ea4f6ee666bf2115c
+          name: 'Synology: Serial number'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.6574.1.5.2.0]'
+          key: 'syno.serial[serialNumber.0]'
+          delay: 1h
+          value_type: CHAR
+          trends: '0'
+          inventory_link: SERIALNO_A
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: component
+              value: system
+        - uuid: 31339dc84f094b0e9c9837b550230948
+          name: 'Synology: System fan status'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.6574.1.4.1.0]'
+          key: 'syno.fan.system[systemFanStatus.0]'
+          valuemap:
+            name: 'Synology normal/failed'
+          tags:
+            - tag: component
+              value: hardware
+          triggers:
+            - uuid: aea56b61a04c49758b1af6cf20a20990
+              expression: 'last(/INT MON-NAS Synology DSM/syno.fan.system[systemFanStatus.0])=2'
+              name: 'INT: Synology system fan failed'
+              priority: HIGH
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: d2c9f6d7064047ef9696635201206099
+          name: 'Synology: System status'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.6574.1.1.0]'
+          key: 'syno.system.status[systemStatus.0]'
+          valuemap:
+            name: 'Synology normal/failed'
+          tags:
+            - tag: component
+              value: system
+          triggers:
+            - uuid: c46cab16e3df4ac4a0d7ef75364bb5a1
+              expression: 'last(/INT MON-NAS Synology DSM/syno.system.status[systemStatus.0])=2'
+              name: 'INT: Synology system status is failed'
+              priority: HIGH
+              description: 'DSM reports a system partition or hardware failure. Check DSM → Storage Manager / Info Center.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: a16a038f824a46f589098454b3fae9d6
+          name: 'Synology: System temperature'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.6574.1.2.0]'
+          key: 'syno.temperature[temperature.0]'
+          units: °C
+          tags:
+            - tag: component
+              value: hardware
+          triggers:
+            - uuid: d57a8713ee8d456b9fbb85ace7e2b8ff
+              expression: 'min(/INT MON-NAS Synology DSM/syno.temperature[temperature.0],15m)>{$INT.NAS.TEMP.MAX}'
+              name: 'INT: Synology system temperature above {$INT.NAS.TEMP.MAX}°C'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 36245bee40a84051bd77b955fd3b473d
+          name: 'Synology: SNMP walk disks'
+          type: SNMP_AGENT
+          snmp_oid: 'walk[1.3.6.1.4.1.6574.2.1.1]'
+          key: syno.disk.walk
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 8b7ba45500ab44b89989df4d246ea931
+          name: 'Synology: SNMP walk storage pools'
+          type: SNMP_AGENT
+          snmp_oid: 'walk[1.3.6.1.4.1.6574.3.1.1]'
+          key: syno.raid.walk
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 877a616352a04d51902383041c120b33
+          name: 'Synology: SNMP walk volumes'
+          type: SNMP_AGENT
+          snmp_oid: 'walk[1.3.6.1.2.1.25.2.3.1.3,1.3.6.1.2.1.25.2.3.1.5,1.3.6.1.2.1.25.2.3.1.6]'
+          key: syno.volume.walk
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'HOST-RESOURCES-MIB hrStorageDescr, hrStorageSize, hrStorageUsed.'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 06d7d351eb0144729c80da26a817db0b
+          name: 'SNMP agent availability'
+          type: INTERNAL
+          key: 'zabbix[host,snmp,available]'
+          tags:
+            - tag: component
+              value: system
+          triggers:
+            - uuid: 579c1b8874c24e4796dd807e56e10f88
+              expression: 'max(/INT MON-NAS Synology DSM/zabbix[host,snmp,available],{$SNMP.TIMEOUT})=0'
+              name: 'INT: Synology NAS is unreachable'
+              priority: HIGH
+              description: 'No SNMP answer for {$SNMP.TIMEOUT}. NAS down, hung, or network problem.'
+              tags:
+                - tag: scope
+                  value: availability
+      discovery_rules:
+        - uuid: 9f199789764043a8b4321d993ea21ee4
+          name: 'Synology: Disks discovery'
+          type: DEPENDENT
+          key: syno.disk.discovery
+          delay: '0'
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: 7756d03c9e0c426d98ad53668cbe6507
+              name: 'Disk {#DISK}: Health status'
+              type: DEPENDENT
+              key: 'syno.disk.health[diskHealthStatus.{#SNMPINDEX}]'
+              delay: '0'
+              valuemap:
+                name: 'Synology disk health'
+              description: 'DSM 7 health assessment (includes SMART, bad sectors, remaining life).'
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.4.1.6574.2.1.1.13.{#SNMPINDEX}'
+                    - '0'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: syno.disk.walk
+              tags:
+                - tag: component
+                  value: disk
+                - tag: disk
+                  value: '{#DISK}'
+              trigger_prototypes:
+                - uuid: bdb36758e6d44206bc02916f7a8bea05
+                  expression: 'last(/INT MON-NAS Synology DSM/syno.disk.health[diskHealthStatus.{#SNMPINDEX}])>=3'
+                  name: 'INT: Synology disk {#DISK} health is critical / failing'
+                  opdata: '{ITEM.LASTVALUE1} ({#MODEL})'
+                  priority: HIGH
+                  description: 'Replace the disk. Check that the pool is not degraded.'
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: 6fe7fa0a37524d9890aabcb22ab8f4eb
+                  expression: 'last(/INT MON-NAS Synology DSM/syno.disk.health[diskHealthStatus.{#SNMPINDEX}])=2'
+                  name: 'INT: Synology disk {#DISK} health warning'
+                  opdata: '{ITEM.LASTVALUE1} ({#MODEL})'
+                  priority: AVERAGE
+                  description: 'SMART or bad sector warning. Plan replacement.'
+                  dependencies:
+                    - name: 'INT: Synology disk {#DISK} health is critical / failing'
+                      expression: 'last(/INT MON-NAS Synology DSM/syno.disk.health[diskHealthStatus.{#SNMPINDEX}])>=3'
+                  tags:
+                    - tag: scope
+                      value: availability
+            - uuid: 1562fe8a291f4263a96f6a87a19a3b78
+              name: 'Disk {#DISK}: Status'
+              type: DEPENDENT
+              key: 'syno.disk.status[diskStatus.{#SNMPINDEX}]'
+              delay: '0'
+              valuemap:
+                name: 'Synology disk status'
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.4.1.6574.2.1.1.5.{#SNMPINDEX}'
+                    - '0'
+              master_item:
+                key: syno.disk.walk
+              tags:
+                - tag: component
+                  value: disk
+                - tag: disk
+                  value: '{#DISK}'
+              trigger_prototypes:
+                - uuid: 10e6dcf3a9a04a788f53173f73cd3013
+                  expression: 'last(/INT MON-NAS Synology DSM/syno.disk.status[diskStatus.{#SNMPINDEX}])=4 or last(/INT MON-NAS Synology DSM/syno.disk.status[diskStatus.{#SNMPINDEX}])=5'
+                  name: 'INT: Synology disk {#DISK} has failed'
+                  opdata: '{ITEM.LASTVALUE1} ({#MODEL})'
+                  priority: HIGH
+                  tags:
+                    - tag: scope
+                      value: availability
+            - uuid: dffa94f6bdc3459da99853fbf801704f
+              name: 'Disk {#DISK}: Temperature'
+              type: DEPENDENT
+              key: 'syno.disk.temp[diskTemperature.{#SNMPINDEX}]'
+              delay: '0'
+              units: °C
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.4.1.6574.2.1.1.6.{#SNMPINDEX}'
+                    - '0'
+              master_item:
+                key: syno.disk.walk
+              tags:
+                - tag: component
+                  value: disk
+                - tag: disk
+                  value: '{#DISK}'
+              trigger_prototypes:
+                - uuid: 94fcf10f1e574fac9040369b39c3e5f9
+                  expression: 'min(/INT MON-NAS Synology DSM/syno.disk.temp[diskTemperature.{#SNMPINDEX}],15m)>{$INT.NAS.DISK.TEMP.MAX}'
+                  name: 'INT: Synology disk {#DISK} temperature above {$INT.NAS.DISK.TEMP.MAX}°C'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: AVERAGE
+                  tags:
+                    - tag: scope
+                      value: availability
+          master_item:
+            key: syno.disk.walk
+          preprocessing:
+            - type: SNMP_WALK_TO_JSON
+              parameters:
+                - '{#DISK}'
+                - 1.3.6.1.4.1.6574.2.1.1.2
+                - '0'
+                - '{#MODEL}'
+                - 1.3.6.1.4.1.6574.2.1.1.3
+                - '0'
+        - uuid: 8f324e3583064b77aace04f656380104
+          name: 'Synology: Storage pools discovery'
+          type: DEPENDENT
+          key: syno.raid.discovery
+          delay: '0'
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: 7ab10feafe384956bc5c311c4670c714
+              name: 'Pool {#RAID}: Status'
+              type: DEPENDENT
+              key: 'syno.raid.status[raidStatus.{#SNMPINDEX}]'
+              delay: '0'
+              valuemap:
+                name: 'Synology RAID status'
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.4.1.6574.3.1.1.3.{#SNMPINDEX}'
+                    - '0'
+              master_item:
+                key: syno.raid.walk
+              tags:
+                - tag: component
+                  value: raid
+                - tag: raid
+                  value: '{#RAID}'
+              trigger_prototypes:
+                - uuid: 2ba8807b184a4812a2e72ef760b290fa
+                  expression: 'last(/INT MON-NAS Synology DSM/syno.raid.status[raidStatus.{#SNMPINDEX}])=11 or last(/INT MON-NAS Synology DSM/syno.raid.status[raidStatus.{#SNMPINDEX}])=12'
+                  name: 'INT: Synology {#RAID} is degraded or crashed'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: DISASTER
+                  description: 'The pool has lost redundancy (degraded) or data (crashed). Another disk failure means data loss. Replace the failed disk now.'
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: 972e99d750724a20ac8956fd84a0b130
+                  expression: 'last(/INT MON-NAS Synology DSM/syno.raid.status[raidStatus.{#SNMPINDEX}])=2 or last(/INT MON-NAS Synology DSM/syno.raid.status[raidStatus.{#SNMPINDEX}])=7'
+                  name: 'INT: Synology {#RAID} is rebuilding'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  description: 'Repair / resync in progress. Performance is reduced and the pool has no redundancy until finished.'
+                  tags:
+                    - tag: scope
+                      value: availability
+          master_item:
+            key: syno.raid.walk
+          preprocessing:
+            - type: SNMP_WALK_TO_JSON
+              parameters:
+                - '{#RAID}'
+                - 1.3.6.1.4.1.6574.3.1.1.2
+                - '0'
+        - uuid: dddab351fa314e188409c65a7fc0b301
+          name: 'Synology: Volumes discovery'
+          type: DEPENDENT
+          key: syno.volume.discovery
+          delay: '0'
+          filter:
+            conditions:
+              - macro: '{#VOLUME}'
+                value: '{$INT.NAS.VOLUME.MATCHES}'
+                formulaid: A
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: 6f96d86b9f094107bed405cc689b7150
+              name: 'Volume {#VOLUME}: Space used, in %'
+              type: DEPENDENT
+              key: 'syno.volume.pused[{#SNMPINDEX}]'
+              delay: '0'
+              value_type: FLOAT
+              units: '%'
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var size = null, used = null;
+                      value.split('\n').forEach(function (line) {
+                          var m = line.match(/^\.?1\.3\.6\.1\.2\.1\.25\.2\.3\.1\.(5|6)\.(\d+)\s*=\s*(?:\w+:\s*)?(\d+)/);
+                          if (m && m[2] === '{#SNMPINDEX}') {
+                              if (m[1] === '5') { size = parseFloat(m[3]); } else { used = parseFloat(m[3]); }
+                          }
+                      });
+                      if (!(size > 0) || used === null) {
+                          throw 'No size data for volume {#SNMPINDEX}.';
+                      }
+                      return used / size * 100;
+              master_item:
+                key: syno.volume.walk
+              tags:
+                - tag: component
+                  value: volume
+                - tag: volume
+                  value: '{#VOLUME}'
+              trigger_prototypes:
+                - uuid: 8f26151efb874ee8989eb654b995826c
+                  expression: 'min(/INT MON-NAS Synology DSM/syno.volume.pused[{#SNMPINDEX}],15m)>{$INT.NAS.VOLUME.PUSED.CRIT:"{#VOLUME}"}'
+                  name: 'INT: Synology volume {#VOLUME} is more than {$INT.NAS.VOLUME.PUSED.CRIT:"{#VOLUME}"}% full'
+                  opdata: '{{ITEM.LASTVALUE1}.fmtnum(1)}%'
+                  priority: HIGH
+                  tags:
+                    - tag: scope
+                      value: capacity
+                - uuid: b04797d43fe74d6b8058b56430326c7e
+                  expression: 'min(/INT MON-NAS Synology DSM/syno.volume.pused[{#SNMPINDEX}],15m)>{$INT.NAS.VOLUME.PUSED.WARN:"{#VOLUME}"}'
+                  name: 'INT: Synology volume {#VOLUME} is more than {$INT.NAS.VOLUME.PUSED.WARN:"{#VOLUME}"}% full'
+                  opdata: '{{ITEM.LASTVALUE1}.fmtnum(1)}%'
+                  priority: AVERAGE
+                  dependencies:
+                    - name: 'INT: Synology volume {#VOLUME} is more than {$INT.NAS.VOLUME.PUSED.CRIT:"{#VOLUME}"}% full'
+                      expression: 'min(/INT MON-NAS Synology DSM/syno.volume.pused[{#SNMPINDEX}],15m)>{$INT.NAS.VOLUME.PUSED.CRIT:"{#VOLUME}"}'
+                  tags:
+                    - tag: scope
+                      value: capacity
+                - uuid: fc02c9365f524d30a4cf403b23b6a0e9
+                  expression: 'timeleft(/INT MON-NAS Synology DSM/syno.volume.pused[{#SNMPINDEX}],{$INT.NAS.TIMELEFT.PERIOD},100)<{$INT.NAS.TIMELEFT.MIN:"{#VOLUME}"} and last(/INT MON-NAS Synology DSM/syno.volume.pused[{#SNMPINDEX}])>{$INT.NAS.TIMELEFT.PUSED.MIN}'
+                  name: 'INT: Synology volume {#VOLUME} will be full in less than {$INT.NAS.TIMELEFT.MIN:"{#VOLUME}"}'
+                  opdata: '{{ITEM.LASTVALUE1}.fmtnum(1)}%'
+                  priority: AVERAGE
+                  dependencies:
+                    - name: 'INT: Synology volume {#VOLUME} is more than {$INT.NAS.VOLUME.PUSED.WARN:"{#VOLUME}"}% full'
+                      expression: 'min(/INT MON-NAS Synology DSM/syno.volume.pused[{#SNMPINDEX}],15m)>{$INT.NAS.VOLUME.PUSED.WARN:"{#VOLUME}"}'
+                  tags:
+                    - tag: scope
+                      value: capacity
+          master_item:
+            key: syno.volume.walk
+          preprocessing:
+            - type: SNMP_WALK_TO_JSON
+              parameters:
+                - '{#VOLUME}'
+                - 1.3.6.1.2.1.25.2.3.1.3
+                - '0'
+      tags:
+        - tag: service
+          value: MON-NAS
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.NAS.DISK.TEMP.MAX}'
+          value: '55'
+        - macro: '{$INT.NAS.TEMP.MAX}'
+          value: '60'
+        - macro: '{$INT.NAS.TIMELEFT.MIN}'
+          value: 14d
+        - macro: '{$INT.NAS.TIMELEFT.PERIOD}'
+          value: 7d
+        - macro: '{$INT.NAS.TIMELEFT.PUSED.MIN}'
+          value: '70'
+        - macro: '{$INT.NAS.UPDATE.PENDING}'
+          value: 7d
+          description: 'DSM update must be pending this long before WARNING (avoids an alert on every release day).'
+        - macro: '{$INT.NAS.VOLUME.MATCHES}'
+          value: '^/volume[0-9]+$'
+          description: 'hrStorage entries treated as data volumes.'
+        - macro: '{$INT.NAS.VOLUME.PUSED.CRIT}'
+          value: '95'
+        - macro: '{$INT.NAS.VOLUME.PUSED.WARN}'
+          value: '85'
+        - macro: '{$SNMP.TIMEOUT}'
+          value: 5m
+      valuemaps:
+        - uuid: 5fa5d26ff09c416c99693eb8f7fe130f
+          name: 'Synology disk health'
+          mappings:
+            - value: '1'
+              newvalue: Normal
+            - value: '2'
+              newvalue: Warning
+            - value: '3'
+              newvalue: Critical
+            - value: '4'
+              newvalue: Failing
+        - uuid: 68d2bf63f1454db6a526a1540ddae3ab
+          name: 'Synology disk status'
+          mappings:
+            - value: '1'
+              newvalue: Normal
+            - value: '2'
+              newvalue: Initialized
+            - value: '3'
+              newvalue: 'Not initialized'
+            - value: '4'
+              newvalue: 'System partition failed'
+            - value: '5'
+              newvalue: Crashed
+        - uuid: dfd7aa46d27448e38e458f40e0fd6887
+          name: 'Synology normal/failed'
+          mappings:
+            - value: '1'
+              newvalue: Normal
+            - value: '2'
+              newvalue: Failed
+        - uuid: 6f127fe9b2574640828c10ad5c6839ba
+          name: 'Synology RAID status'
+          mappings:
+            - value: '1'
+              newvalue: Normal
+            - value: '2'
+              newvalue: Repairing
+            - value: '3'
+              newvalue: Migrating
+            - value: '4'
+              newvalue: Expanding
+            - value: '5'
+              newvalue: Deleting
+            - value: '6'
+              newvalue: Creating
+            - value: '7'
+              newvalue: 'RAID syncing'
+            - value: '8'
+              newvalue: 'Parity checking'
+            - value: '9'
+              newvalue: Assembling
+            - value: '10'
+              newvalue: Canceling
+            - value: '11'
+              newvalue: Degraded
+            - value: '12'
+              newvalue: Crashed
+            - value: '13'
+              newvalue: 'Data scrubbing'
+        - uuid: 0ff22e0a71074bcbac8c7c4f6f5ccacf
+          name: 'Synology upgrade available'
+          mappings:
+            - value: '1'
+              newvalue: Available
+            - value: '2'
+              newvalue: 'Up to date'
+            - value: '3'
+              newvalue: Connecting
+            - value: '4'
+              newvalue: Disconnected
+            - value: '5'
+              newvalue: Other

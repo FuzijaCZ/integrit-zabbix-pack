@@ -1,0 +1,415 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 181fd4f24c0d4d729b50e8bd6b638487
+      name: Templates/Integrit/MON-NAS
+  templates:
+    - uuid: 3887874a90a34cb4bfb786966fa152b7
+      template: 'INT MON-NAS QNAP'
+      name: 'INT MON-NAS QNAP'
+      description: |
+        Integrit MON-NAS template for QNAP NAS with QTS / QuTS hero (SNMPv3, site proxy). No official Zabbix 7.0 template exists.
+        Uses the QNAP NAS-MIB (1.3.6.1.4.1.24681.1.2), which returns most values as text ("36 C/96 F", "3.62 TB"); preprocessing converts them.
+        Volume degraded DISASTER, rebuilding WARNING, disk error HIGH, SMART warning AVERAGE / abnormal HIGH,
+        volume 85 % AVERAGE / 95 % HIGH / full in < 14 days AVERAGE, fan stopped HIGH, temperature AVERAGE, NAS unreachable HIGH.
+        Not available in this MIB: power supply state and firmware update notice.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-NAS
+      items:
+        - uuid: 77e7904c9bdd46d19a5b5f730c67bebd
+          name: 'QNAP: SNMP walk disks'
+          type: SNMP_AGENT
+          snmp_oid: 'walk[1.3.6.1.4.1.24681.1.2.11.1]'
+          key: qnap.disk.walk
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 14b60c8fdfd0480b9a10aa743a6eb86d
+          name: 'QNAP: SNMP walk fans'
+          type: SNMP_AGENT
+          snmp_oid: 'walk[1.3.6.1.4.1.24681.1.2.15.1]'
+          key: qnap.fan.walk
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 078bf420564f44fc8583b6f01161d176
+          name: 'QNAP: SNMP walk volumes'
+          type: SNMP_AGENT
+          snmp_oid: 'walk[1.3.6.1.4.1.24681.1.2.17.1]'
+          key: qnap.volume.walk
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 16dc54ff5cee42bf8aca2dba515820c1
+          name: 'QNAP: System temperature'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.24681.1.2.6.0]'
+          key: 'qnap.temperature[systemTemperature.0]'
+          units: °C
+          description: 'NAS-MIB systemTemperature, text like "40 C/104 F".'
+          preprocessing:
+            - type: REGEX
+              parameters:
+                - '(-?\d+)\s*C'
+                - \1
+          tags:
+            - tag: component
+              value: hardware
+          triggers:
+            - uuid: 9cea0573c0574767822ce2696f403e83
+              expression: 'min(/INT MON-NAS QNAP/qnap.temperature[systemTemperature.0],15m)>{$INT.NAS.TEMP.MAX}'
+              name: 'INT: QNAP system temperature above {$INT.NAS.TEMP.MAX}°C'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 313fa2a1740341e4a867619824e7dd96
+          name: 'SNMP agent availability'
+          type: INTERNAL
+          key: 'zabbix[host,snmp,available]'
+          tags:
+            - tag: component
+              value: system
+          triggers:
+            - uuid: cc364081ef094a3a9d39ddadf691707f
+              expression: 'max(/INT MON-NAS QNAP/zabbix[host,snmp,available],{$SNMP.TIMEOUT})=0'
+              name: 'INT: QNAP NAS is unreachable'
+              priority: HIGH
+              tags:
+                - tag: scope
+                  value: availability
+      discovery_rules:
+        - uuid: eeae49ee177c419b95bc53361d3a7ceb
+          name: 'QNAP: Disks discovery'
+          type: DEPENDENT
+          key: qnap.disk.discovery
+          delay: '0'
+          filter:
+            conditions:
+              - macro: '{#MODEL}'
+                value: '{$INT.NAS.QNAP.DISK.MODEL.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: A
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Empty bays (model "--") are skipped.'
+          item_prototypes:
+            - uuid: 7536cf0aa0334d089cd181367d9a8ee5
+              name: 'Disk {#DISK}: SMART'
+              type: DEPENDENT
+              key: 'qnap.disk.smart[HdSmartInfo.{#SNMPINDEX}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.4.1.24681.1.2.11.1.7.{#SNMPINDEX}'
+                    - '0'
+              master_item:
+                key: qnap.disk.walk
+              tags:
+                - tag: component
+                  value: disk
+                - tag: disk
+                  value: '{#DISK}'
+              trigger_prototypes:
+                - uuid: 8f711ef4239f460d8979f4943d03b1e2
+                  expression: 'find(/INT MON-NAS QNAP/qnap.disk.smart[HdSmartInfo.{#SNMPINDEX}],,"iregexp","abnormal|bad|fail")=1'
+                  name: 'INT: QNAP disk {#DISK} SMART is abnormal'
+                  opdata: '{ITEM.LASTVALUE1} ({#MODEL})'
+                  priority: HIGH
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: aee96aeb58bf42728cd43e01b5e7af78
+                  expression: 'find(/INT MON-NAS QNAP/qnap.disk.smart[HdSmartInfo.{#SNMPINDEX}],,"iregexp","warning")=1'
+                  name: 'INT: QNAP disk {#DISK} SMART warning'
+                  opdata: '{ITEM.LASTVALUE1} ({#MODEL})'
+                  priority: AVERAGE
+                  tags:
+                    - tag: scope
+                      value: availability
+            - uuid: c85f1efe04134afa919a58616edb2dbd
+              name: 'Disk {#DISK}: Status'
+              type: DEPENDENT
+              key: 'qnap.disk.status[HdStatus.{#SNMPINDEX}]'
+              delay: '0'
+              value_type: FLOAT
+              valuemap:
+                name: 'QNAP disk status'
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.4.1.24681.1.2.11.1.4.{#SNMPINDEX}'
+                    - '0'
+              master_item:
+                key: qnap.disk.walk
+              tags:
+                - tag: component
+                  value: disk
+                - tag: disk
+                  value: '{#DISK}'
+              trigger_prototypes:
+                - uuid: fc3115729a23487ba560e94776d31b73
+                  expression: 'last(/INT MON-NAS QNAP/qnap.disk.status[HdStatus.{#SNMPINDEX}])=-9 or last(/INT MON-NAS QNAP/qnap.disk.status[HdStatus.{#SNMPINDEX}])=-6'
+                  name: 'INT: QNAP disk {#DISK} has failed'
+                  opdata: '{ITEM.LASTVALUE1} ({#MODEL})'
+                  priority: HIGH
+                  tags:
+                    - tag: scope
+                      value: availability
+            - uuid: 18e57c1da6164b51a5d6ee87718a89fd
+              name: 'Disk {#DISK}: Temperature'
+              type: DEPENDENT
+              key: 'qnap.disk.temp[HdTemperature.{#SNMPINDEX}]'
+              delay: '0'
+              units: °C
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.4.1.24681.1.2.11.1.3.{#SNMPINDEX}'
+                    - '0'
+                - type: REGEX
+                  parameters:
+                    - '(-?\d+)\s*C'
+                    - \1
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: qnap.disk.walk
+              tags:
+                - tag: component
+                  value: disk
+                - tag: disk
+                  value: '{#DISK}'
+              trigger_prototypes:
+                - uuid: 9462b1c3ab1e4183bb5360cb14eeef80
+                  expression: 'min(/INT MON-NAS QNAP/qnap.disk.temp[HdTemperature.{#SNMPINDEX}],15m)>{$INT.NAS.DISK.TEMP.MAX}'
+                  name: 'INT: QNAP disk {#DISK} temperature above {$INT.NAS.DISK.TEMP.MAX}°C'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: AVERAGE
+                  tags:
+                    - tag: scope
+                      value: availability
+          master_item:
+            key: qnap.disk.walk
+          preprocessing:
+            - type: SNMP_WALK_TO_JSON
+              parameters:
+                - '{#DISK}'
+                - 1.3.6.1.4.1.24681.1.2.11.1.2
+                - '0'
+                - '{#MODEL}'
+                - 1.3.6.1.4.1.24681.1.2.11.1.5
+                - '0'
+        - uuid: 50ee02ea2f7b47d6bb94c6a9fa32c81d
+          name: 'QNAP: Fans discovery'
+          type: DEPENDENT
+          key: qnap.fan.discovery
+          delay: '0'
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: 2959d370e3cf49b8b1beb8b62e263afd
+              name: 'Fan {#FAN}: Speed'
+              type: DEPENDENT
+              key: 'qnap.fan.speed[SysFanSpeed.{#SNMPINDEX}]'
+              delay: '0'
+              units: rpm
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.4.1.24681.1.2.15.1.3.{#SNMPINDEX}'
+                    - '0'
+                - type: REGEX
+                  parameters:
+                    - '(\d+)'
+                    - \1
+              master_item:
+                key: qnap.fan.walk
+              tags:
+                - tag: component
+                  value: hardware
+              trigger_prototypes:
+                - uuid: a44246973776406ba4b99034ea0a24b5
+                  expression: 'max(/INT MON-NAS QNAP/qnap.fan.speed[SysFanSpeed.{#SNMPINDEX}],10m)=0'
+                  name: 'INT: QNAP fan {#FAN} has stopped'
+                  priority: HIGH
+                  tags:
+                    - tag: scope
+                      value: availability
+          master_item:
+            key: qnap.fan.walk
+          preprocessing:
+            - type: SNMP_WALK_TO_JSON
+              parameters:
+                - '{#FAN}'
+                - 1.3.6.1.4.1.24681.1.2.15.1.2
+                - '0'
+        - uuid: ce239314189c43e2a3ffae941b305672
+          name: 'QNAP: Volumes discovery'
+          type: DEPENDENT
+          key: qnap.volume.discovery
+          delay: '0'
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: 2e13e09272154f35bcfe0ddf7332c94d
+              name: 'Volume {#VOLUME}: Space used, in %'
+              type: DEPENDENT
+              key: 'qnap.volume.pused[{#SNMPINDEX}]'
+              delay: '0'
+              value_type: FLOAT
+              units: '%'
+              description: 'From SysVolumeTotalSize / SysVolumeFreeSize text values ("3.62 TB").'
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var u = {'B': 1, 'KB': 1e3, 'MB': 1e6, 'GB': 1e9, 'TB': 1e12, 'PB': 1e15};
+                      var total = null, free = null;
+                      value.split('\n').forEach(function (line) {
+                          var m = line.match(/^\.?1\.3\.6\.1\.4\.1\.24681\.1\.2\.17\.1\.(4|5)\.(\d+)\s*=\s*(?:STRING:\s*)?"?([\d.]+)\s*([KMGTP]?B)/i);
+                          if (m && m[2] === '{#SNMPINDEX}') {
+                              var b = parseFloat(m[3]) * u[m[4].toUpperCase()];
+                              if (m[1] === '4') { total = b; } else { free = b; }
+                          }
+                      });
+                      if (!(total > 0) || free === null) {
+                          throw 'No size data for volume {#SNMPINDEX}.';
+                      }
+                      return (total - free) / total * 100;
+              master_item:
+                key: qnap.volume.walk
+              tags:
+                - tag: component
+                  value: volume
+                - tag: volume
+                  value: '{#VOLUME}'
+              trigger_prototypes:
+                - uuid: 1a29c5e825064d68bc0486dcccb107f4
+                  expression: 'min(/INT MON-NAS QNAP/qnap.volume.pused[{#SNMPINDEX}],15m)>{$INT.NAS.VOLUME.PUSED.CRIT:"{#VOLUME}"}'
+                  name: 'INT: QNAP volume {#VOLUME} is more than {$INT.NAS.VOLUME.PUSED.CRIT:"{#VOLUME}"}% full'
+                  opdata: '{{ITEM.LASTVALUE1}.fmtnum(1)}%'
+                  priority: HIGH
+                  tags:
+                    - tag: scope
+                      value: capacity
+                - uuid: de53cb7e07ae47f5a126f364d9d672b8
+                  expression: 'min(/INT MON-NAS QNAP/qnap.volume.pused[{#SNMPINDEX}],15m)>{$INT.NAS.VOLUME.PUSED.WARN:"{#VOLUME}"}'
+                  name: 'INT: QNAP volume {#VOLUME} is more than {$INT.NAS.VOLUME.PUSED.WARN:"{#VOLUME}"}% full'
+                  opdata: '{{ITEM.LASTVALUE1}.fmtnum(1)}%'
+                  priority: AVERAGE
+                  dependencies:
+                    - name: 'INT: QNAP volume {#VOLUME} is more than {$INT.NAS.VOLUME.PUSED.CRIT:"{#VOLUME}"}% full'
+                      expression: 'min(/INT MON-NAS QNAP/qnap.volume.pused[{#SNMPINDEX}],15m)>{$INT.NAS.VOLUME.PUSED.CRIT:"{#VOLUME}"}'
+                  tags:
+                    - tag: scope
+                      value: capacity
+                - uuid: 88c392818e5d4518bcd3f2944b231d37
+                  expression: 'timeleft(/INT MON-NAS QNAP/qnap.volume.pused[{#SNMPINDEX}],{$INT.NAS.TIMELEFT.PERIOD},100)<{$INT.NAS.TIMELEFT.MIN:"{#VOLUME}"} and last(/INT MON-NAS QNAP/qnap.volume.pused[{#SNMPINDEX}])>{$INT.NAS.TIMELEFT.PUSED.MIN}'
+                  name: 'INT: QNAP volume {#VOLUME} will be full in less than {$INT.NAS.TIMELEFT.MIN:"{#VOLUME}"}'
+                  opdata: '{{ITEM.LASTVALUE1}.fmtnum(1)}%'
+                  priority: AVERAGE
+                  dependencies:
+                    - name: 'INT: QNAP volume {#VOLUME} is more than {$INT.NAS.VOLUME.PUSED.WARN:"{#VOLUME}"}% full'
+                      expression: 'min(/INT MON-NAS QNAP/qnap.volume.pused[{#SNMPINDEX}],15m)>{$INT.NAS.VOLUME.PUSED.WARN:"{#VOLUME}"}'
+                  tags:
+                    - tag: scope
+                      value: capacity
+            - uuid: 9e9204489a794301a40f3bb582cf74db
+              name: 'Volume {#VOLUME}: Status'
+              type: DEPENDENT
+              key: 'qnap.volume.status[SysVolumeStatus.{#SNMPINDEX}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.4.1.24681.1.2.17.1.6.{#SNMPINDEX}'
+                    - '0'
+              master_item:
+                key: qnap.volume.walk
+              tags:
+                - tag: component
+                  value: volume
+                - tag: volume
+                  value: '{#VOLUME}'
+              trigger_prototypes:
+                - uuid: 42298b59b7044cd8ace9e1b04d12078f
+                  expression: 'find(/INT MON-NAS QNAP/qnap.volume.status[SysVolumeStatus.{#SNMPINDEX}],,"iregexp","degrad|crash|fail|not active|error")=1'
+                  name: 'INT: QNAP volume {#VOLUME} is degraded or failed'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: DISASTER
+                  description: 'The RAID group of this volume lost redundancy or data. Another disk failure means data loss.'
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: fe17cdae82854d719c7ce3724daec7c1
+                  expression: 'find(/INT MON-NAS QNAP/qnap.volume.status[SysVolumeStatus.{#SNMPINDEX}],,"iregexp","rebuild|sync|recover")=1'
+                  name: 'INT: QNAP volume {#VOLUME} is rebuilding'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  dependencies:
+                    - name: 'INT: QNAP volume {#VOLUME} is degraded or failed'
+                      expression: 'find(/INT MON-NAS QNAP/qnap.volume.status[SysVolumeStatus.{#SNMPINDEX}],,"iregexp","degrad|crash|fail|not active|error")=1'
+                  tags:
+                    - tag: scope
+                      value: availability
+          master_item:
+            key: qnap.volume.walk
+          preprocessing:
+            - type: SNMP_WALK_TO_JSON
+              parameters:
+                - '{#VOLUME}'
+                - 1.3.6.1.4.1.24681.1.2.17.1.2
+                - '0'
+      tags:
+        - tag: service
+          value: MON-NAS
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.NAS.DISK.TEMP.MAX}'
+          value: '55'
+        - macro: '{$INT.NAS.QNAP.DISK.MODEL.NOT_MATCHES}'
+          value: '^(--|)$'
+        - macro: '{$INT.NAS.TEMP.MAX}'
+          value: '60'
+        - macro: '{$INT.NAS.TIMELEFT.MIN}'
+          value: 14d
+        - macro: '{$INT.NAS.TIMELEFT.PERIOD}'
+          value: 7d
+        - macro: '{$INT.NAS.TIMELEFT.PUSED.MIN}'
+          value: '70'
+        - macro: '{$INT.NAS.VOLUME.PUSED.CRIT}'
+          value: '95'
+        - macro: '{$INT.NAS.VOLUME.PUSED.WARN}'
+          value: '85'
+        - macro: '{$SNMP.TIMEOUT}'
+          value: 5m
+      valuemaps:
+        - uuid: 8544dd3484c24feca69cea184b401a6e
+          name: 'QNAP disk status'
+          mappings:
+            - value: '0'
+              newvalue: Ready
+            - value: '-4'
+              newvalue: Unknown
+            - value: '-5'
+              newvalue: 'No disk'
+            - value: '-6'
+              newvalue: Invalid
+            - value: '-9'
+              newvalue: 'Read/write error'
