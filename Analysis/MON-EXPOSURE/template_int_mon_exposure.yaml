@@ -1,0 +1,545 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: f8732bfda41a4631b2747a164444c07f
+      name: Templates/Integrit/MON-EXPOSURE
+  templates:
+    - uuid: 6852ee69e2f74e2b93e4195c329a0b0f
+      template: 'INT MON-EXPOSURE KEV feed'
+      name: 'INT MON-EXPOSURE KEV feed'
+      description: |
+        Integrit MON-EXPOSURE fleet advisory: daily download of the CISA Known Exploited Vulnerabilities catalog. A new entry for a
+        vendor used at customers ({$INT.EXP.KEV.VENDORS}) opens a problem with the CVE list: check the firmware of that vendor at all
+        customers (MON-NET / MON-LIFECYCLE inventory). Linked once on the Zabbix server host (or the external proxy host).
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-EXPOSURE
+      items:
+        - uuid: 0ef8272d7a0c48289375f0202f924b11
+          name: 'KEV: raw'
+          type: SCRIPT
+          key: int.exp.kev.get
+          delay: 1d
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          params: |
+            var p = JSON.parse(value), out = {error: '', count: 0, text: ''};
+            try {
+                var req = new HttpRequest();
+                if (p.http_proxy && p.http_proxy.indexOf('{$') !== 0) {
+                    req.setProxy(p.http_proxy);
+                }
+                var body = req.get(p.url);
+                if (req.getStatus() !== 200) {
+                    throw 'KEV download HTTP ' + req.getStatus();
+                }
+                var kev = JSON.parse(body), vre = new RegExp(p.vendors, 'i');
+                var since = new Date(Date.now() - parseInt(p.days, 10) * 86400000).toISOString().substring(0, 10), hits = [];
+                (kev.vulnerabilities || []).forEach(function (v) {
+                    if (v.dateAdded >= since && vre.test(v.vendorProject)) {
+                        hits.push(v.vendorProject + ' ' + v.product + ' ' + v.cveID + ' (' + v.dateAdded + ')');
+                    }
+                });
+                out.count = hits.length;
+                out.text = hits.join('; ').substring(0, 240);
+                out.catalog = kev.catalogVersion || '';
+            }
+            catch (e) {
+                out.error = String(e).substring(0, 300);
+            }
+            return JSON.stringify(out);
+          timeout: 60s
+          parameters:
+            - name: days
+              value: '{$INT.EXP.KEV.DAYS}'
+            - name: http_proxy
+              value: '{$INT.EXP.KEV.HTTP.PROXY}'
+            - name: url
+              value: '{$INT.EXP.KEV.URL}'
+            - name: vendors
+              value: '{$INT.EXP.KEV.VENDORS}'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 6f1b9e0eb9d54868b0ea09b839961372
+          name: 'KEV: new entries for our vendors'
+          type: DEPENDENT
+          key: int.exp.kev.count
+          delay: '0'
+          value_type: UNSIGNED
+          description: 'Entries added in the last {$INT.EXP.KEV.DAYS} days.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.count'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.exp.kev.get
+          tags:
+            - tag: component
+              value: kev
+          triggers:
+            - uuid: d762526132ef47d8bf87ab082ebe1ab3
+              expression: 'last(/INT MON-EXPOSURE KEV feed/int.exp.kev.count)>0 and length(last(/INT MON-EXPOSURE KEV feed/int.exp.kev.text))>0'
+              recovery_mode: NONE
+              name: 'INT: New actively exploited vulnerability for a vendor used at customers'
+              event_name: 'INT: New actively exploited vulnerability: {ITEM.LASTVALUE2}'
+              priority: HIGH
+              description: 'Check every affected device (version, vendor PSIRT advisory), patch or mitigate, then close manually. KEV entries are being exploited in the wild now.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 44a9148be5224e25812b5fc6c789294a
+          name: 'KEV: new entries'
+          type: DEPENDENT
+          key: int.exp.kev.text
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.text'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.exp.kev.get
+          tags:
+            - tag: component
+              value: kev
+        - uuid: e7e112ea9ff8420fbf59a895bb06623b
+          name: 'KEV: download error'
+          type: DEPENDENT
+          key: int.exp.kev.error
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.error'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.exp.kev.get
+          tags:
+            - tag: component
+              value: kev
+          triggers:
+            - uuid: 2a31e4251c904c58a3d9cf531107e96b
+              expression: 'length(last(/INT MON-EXPOSURE KEV feed/int.exp.kev.error))>0'
+              name: 'INT: CISA KEV catalog download fails'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Internet access of the proxy / server or the URL changed.'
+              tags:
+                - tag: scope
+                  value: monitoring
+      tags:
+        - tag: service
+          value: MON-EXPOSURE
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.EXP.KEV.DAYS}'
+          value: '2'
+          description: 'Look-back in days (daily run; 2 covers a missed day).'
+        - macro: '{$INT.EXP.KEV.HTTP.PROXY}'
+        - macro: '{$INT.EXP.KEV.URL}'
+          value: 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json'
+        - macro: '{$INT.EXP.KEV.VENDORS}'
+          value: '^(Fortinet|Ivanti|Cisco|Palo Alto Networks|SonicWall|Citrix|MikroTik|Ubiquiti|QNAP|Synology|VMware|Veeam|Zyxel|Sophos|WatchGuard|Microsoft)$'
+          description: 'Regex of vendorProject values (vendors installed at customers).'
+    - uuid: d634329fa4ba4a2196b1bc05f99e4844
+      template: 'INT MON-EXPOSURE Public IP'
+      name: 'INT MON-EXPOSURE Public IP'
+      description: |
+        Integrit MON-EXPOSURE for one public IP of a customer (host interface = the public IP), checked from OUTSIDE.
+        Quick checks every 15 min from the external proxy: high-risk ports (RDP / SMB DISASTER, admin panels / DB / VNC HIGH).
+        Weekly full scan from the Integrit scan VM (nmap top-1000 TCP + UDP list + TLS ciphers) sent by zabbix_sender:
+        ports outside the approved baseline, legacy TLS, weak ciphers. Only with written customer consent listing the IPs.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-EXPOSURE
+      items:
+        - uuid: 13dbab18a5d6499bba9651a16213ce66
+          name: 'Scan: raw result'
+          type: TRAP
+          key: int.exp.scan
+          delay: '0'
+          history: 400d
+          value_type: TEXT
+          trends: '0'
+          allowed_hosts: '{$INT.EXP.SCANNER.IP}'
+          description: 'JSON sent weekly by int-exposure-scan.py from the Integrit scan VM (kept 400 days: monthly exposure report, NIS2 evidence).'
+          tags:
+            - tag: component
+              value: raw
+          triggers:
+            - uuid: 27693ae821434d3fb03502d3ab41bf4b
+              expression: 'nodata(/INT MON-EXPOSURE Public IP/int.exp.scan,{$INT.EXP.SCAN.MAXAGE})=1'
+              name: 'INT: External scan of {HOST.NAME} not completed for {$INT.EXP.SCAN.MAXAGE}'
+              priority: AVERAGE
+              description: 'Integrit internal: scan VM, timer or zabbix_sender to the external proxy failing (journalctl -u int-exposure-scan).'
+              tags:
+                - tag: scope
+                  value: monitoring
+        - uuid: 6f37fb4b70e843358c5225e579c86d2a
+          name: 'Scan: error'
+          type: DEPENDENT
+          key: int.exp.scan.error
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Empty = last scan OK.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.error'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.exp.scan
+          tags:
+            - tag: component
+              value: scan
+          triggers:
+            - uuid: 585046f7ac1d4a158d2c9bf470136d12
+              expression: 'length(last(/INT MON-EXPOSURE Public IP/int.exp.scan.error))>0'
+              name: 'INT: External scan of {HOST.NAME} failed'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Text in item "Scan: error". Integrit internal.'
+              tags:
+                - tag: scope
+                  value: monitoring
+        - uuid: dc4dad057e6c4a908c5dcbac3323a318
+          name: 'Scan: open TCP ports'
+          type: DEPENDENT
+          key: int.exp.scan.tcp
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.tcp_open'
+              error_handler: DISCARD_VALUE
+            - type: JAVASCRIPT
+              parameters:
+                - 'return JSON.parse(value).join('', '');'
+          master_item:
+            key: int.exp.scan
+          tags:
+            - tag: component
+              value: scan
+        - uuid: f31c939ba5d1481491cb527d5dba5200
+          name: 'Scan: open UDP ports'
+          type: DEPENDENT
+          key: int.exp.scan.udp
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.udp_open'
+              error_handler: DISCARD_VALUE
+            - type: JAVASCRIPT
+              parameters:
+                - 'return JSON.parse(value).join('', '');'
+          master_item:
+            key: int.exp.scan
+          tags:
+            - tag: component
+              value: scan
+        - uuid: 489c318c38e94174bb820c01e3e9fcd1
+          name: 'Scan: ports outside the baseline'
+          type: DEPENDENT
+          key: int.exp.scan.unexpected
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          description: 'Open ports not in {$INT.EXP.BASELINE} and not already watched by the quick port checks.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                    var d = JSON.parse(value);
+                    if (d.error) {
+                        throw 'scan error: ' + d.error;
+                    }
+                    function ports(s) {
+                        var out = {}, m, re = /(?:^|[;,])\s*(\d+)/g;
+                        while ((m = re.exec(s)) !== null) {
+                            out[m[1]] = 1;
+                        }
+                        return out;
+                    }
+                    var base = ports('{$INT.EXP.BASELINE}'), risk = ports('{$INT.EXP.PORTS.CRITICAL};{$INT.EXP.PORTS.RISKY}'), res = [];
+                    (d.tcp_open || []).forEach(function (p) {
+                        if (!base[p] && !risk[p]) {
+                            res.push('tcp/' + p + ((d.services || {})[p] ? ' ' + d.services[p] : ''));
+                        }
+                    });
+                    (d.udp_open || []).forEach(function (p) {
+                        if (!base['u' + p] && !base[p]) {
+                            res.push('udp/' + p);
+                        }
+                    });
+                    return res.join(', ');
+          master_item:
+            key: int.exp.scan
+          tags:
+            - tag: component
+              value: scan
+          triggers:
+            - uuid: 2e20a854f7de4bd0abcc0cd5ed694863
+              expression: 'length(last(/INT MON-EXPOSURE Public IP/int.exp.scan.unexpected))>0'
+              name: 'INT: New open ports on {HOST.NAME} outside the approved baseline'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Ports in item "Scan: ports outside the baseline". Close them on the firewall or, when approved by the customer, add them to {$INT.EXP.BASELINE}.'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: ac6bc1967b3c40b1b321acce220ff9fe
+          name: 'Scan: TLS analysis raw'
+          type: DEPENDENT
+          key: int.exp.scan.tls
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Legacy protocols and weak cipher grades per TLS port.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                    var d = JSON.parse(value), legacy = [], weak = [], order = 'ABCDEF', min = order.indexOf('{$INT.EXP.TLS.GRADE.MIN}');
+                    if (d.error) {
+                        throw 'scan error: ' + d.error;
+                    }
+                    Object.keys(d.tls || {}).forEach(function (p) {
+                        var t = d.tls[p];
+                        var old = (t.protocols || []).filter(function (x) { return /^(SSL|TLSv1\.0|TLSv1\.1)/.test(x); });
+                        if (old.length) {
+                            legacy.push(p + ' ' + old.join('/'));
+                        }
+                        if (t.grade && order.indexOf(t.grade) > min) {
+                            weak.push(p + ' grade ' + t.grade);
+                        }
+                    });
+                    return JSON.stringify({legacy: legacy.join(', '), weak: weak.join(', ')});
+          master_item:
+            key: int.exp.scan
+          tags:
+            - tag: component
+              value: scan
+        - uuid: c1cca02c6cf349bf8f52059388aefe23
+          name: 'Scan: legacy TLS ports'
+          type: DEPENDENT
+          key: int.exp.scan.tls.legacy
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.legacy'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.exp.scan.tls
+          tags:
+            - tag: component
+              value: scan
+          triggers:
+            - uuid: c712bf9ece55459ab5566273be9ae4df
+              expression: 'length(last(/INT MON-EXPOSURE Public IP/int.exp.scan.tls.legacy))>0'
+              name: 'INT: Exposed service on {HOST.NAME} still offers SSL / TLS 1.0 / 1.1'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Disable TLS 1.0/1.1 on the VPN portal / web server (ports in opdata).'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 7cbab90ee2a945a19f21ffb54ef7759f
+          name: 'Scan: weak TLS cipher ports'
+          type: DEPENDENT
+          key: int.exp.scan.tls.weak
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.weak'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.exp.scan.tls
+          tags:
+            - tag: component
+              value: scan
+          triggers:
+            - uuid: ffb8bc00fdf0490185dc5bcf2a1f4b62
+              expression: 'length(last(/INT MON-EXPOSURE Public IP/int.exp.scan.tls.weak))>0'
+              name: 'INT: Exposed service on {HOST.NAME} offers weak TLS ciphers'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'nmap ssl-enum-ciphers grade worse than {$INT.EXP.TLS.GRADE.MIN}. Remove weak ciphers (3DES, RC4, CBC with SHA1, export).'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 960d9d3036e84a37a46454e14333de78
+          name: 'Scan: services'
+          type: DEPENDENT
+          key: int.exp.scan.services
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Service / product name per open port (nmap version-light).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.services'
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 30d
+          master_item:
+            key: int.exp.scan
+          tags:
+            - tag: component
+              value: scan
+      discovery_rules:
+        - uuid: 912b4d0665d74e8f9c1e487db2788b49
+          name: 'Critical ports from {$INT.EXP.PORTS.CRITICAL}'
+          type: SCRIPT
+          key: 'int.exp.discovery[critical]'
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), names = String(p.fields).split(','), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.replace(/\\\|/g, '\u0001').split('|').map(function (x) { return x.replace(/\u0001/g, '|'); }), row = {};
+                if (f.length !== names.length) {
+                    throw 'Entry "' + entry + '" needs ' + names.length + ' fields separated by |: ' + p.fields;
+                }
+                names.forEach(function (n, i) { row[n.trim()] = f[i].trim(); });
+                out.push(row);
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: fields
+              value: '{#PORT},{#SERVICE}'
+            - name: list
+              value: '{$INT.EXP.PORTS.CRITICAL}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Entries port|service separated by ;.'
+          item_prototypes:
+            - uuid: db77471e2a524bf3b50cd3d5e561b1d4
+              name: 'Port {#PORT} ({#SERVICE}) reachable from the internet'
+              type: SIMPLE
+              key: 'net.tcp.service[tcp,,{#PORT}]'
+              delay: '{$INT.EXP.INTERVAL}'
+              valuemap:
+                name: 'INT EXP open/closed'
+              tags:
+                - tag: component
+                  value: ports
+                - tag: port
+                  value: '{#PORT}'
+          trigger_prototypes:
+            - uuid: c75104e91605465485028b267566bfa5
+              expression: 'min(/INT MON-EXPOSURE Public IP/net.tcp.service[tcp,,{#PORT}],#2)=1 and {$INT.EXP.ALLOWED:"{#PORT}"}=0'
+              name: 'INT: {#SERVICE} (TCP {#PORT}) is open to the internet on {HOST.NAME}'
+              priority: DISASTER
+              description: 'Top ransomware entry points open to the internet. Close the port forward / restrict to VPN now. If formally accepted by the customer: {$INT.EXP.ALLOWED:"<port>"}=1.'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 6747b9841d3b4a63bc84cd604ba67020
+          name: 'Risky ports from {$INT.EXP.PORTS.RISKY}'
+          type: SCRIPT
+          key: 'int.exp.discovery[risky]'
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), names = String(p.fields).split(','), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.replace(/\\\|/g, '\u0001').split('|').map(function (x) { return x.replace(/\u0001/g, '|'); }), row = {};
+                if (f.length !== names.length) {
+                    throw 'Entry "' + entry + '" needs ' + names.length + ' fields separated by |: ' + p.fields;
+                }
+                names.forEach(function (n, i) { row[n.trim()] = f[i].trim(); });
+                out.push(row);
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: fields
+              value: '{#PORT},{#SERVICE}'
+            - name: list
+              value: '{$INT.EXP.PORTS.RISKY}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Entries port|service separated by ;.'
+          item_prototypes:
+            - uuid: b004f83471014a1488a665bf2b81c43c
+              name: 'Port {#PORT} ({#SERVICE}) reachable from the internet'
+              type: SIMPLE
+              key: 'net.tcp.service[tcp,{HOST.CONN},{#PORT}]'
+              delay: '{$INT.EXP.INTERVAL}'
+              valuemap:
+                name: 'INT EXP open/closed'
+              tags:
+                - tag: component
+                  value: ports
+                - tag: port
+                  value: '{#PORT}'
+          trigger_prototypes:
+            - uuid: 351ce324d6a94300bd3466c98ec468cd
+              expression: 'min(/INT MON-EXPOSURE Public IP/net.tcp.service[tcp,{HOST.CONN},{#PORT}],#2)=1 and {$INT.EXP.ALLOWED:"{#PORT}"}=0'
+              name: 'INT: Risky service {#SERVICE} (TCP {#PORT}) reachable from the internet on {HOST.NAME}'
+              priority: HIGH
+              description: 'Admin panel, database, legacy or remote-control service reachable from the internet. Restrict by source IP or VPN. Accepted exposure (e.g. the VPN portal): {$INT.EXP.ALLOWED:"<port>"}=1.'
+              tags:
+                - tag: scope
+                  value: security
+      tags:
+        - tag: service
+          value: MON-EXPOSURE
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.EXP.ALLOWED}'
+          value: '0'
+          description: 'Use with port context: {$INT.EXP.ALLOWED:"8443"}=1 = exposure approved by the customer (no alert).'
+        - macro: '{$INT.EXP.BASELINE}'
+          value: '80,443'
+          description: 'Approved open ports for the weekly scan, comma list. UDP ports with prefix u (u500,u4500 for IPsec).'
+        - macro: '{$INT.EXP.INTERVAL}'
+          value: 15m
+        - macro: '{$INT.EXP.PORTS.CRITICAL}'
+          value: '3389|RDP;445|SMB;139|NetBIOS'
+        - macro: '{$INT.EXP.PORTS.RISKY}'
+          value: '21|FTP;23|Telnet;135|MS RPC;1433|MS SQL;3306|MySQL;5432|PostgreSQL;5900|VNC;5985|WinRM;5986|WinRM HTTPS;8080|HTTP admin;8443|HTTPS admin / VPN;4443|HTTPS admin;10443|FortiGate SSL VPN;9443|Admin panel;2049|NFS;6379|Redis;27017|MongoDB;9200|Elasticsearch;11211|Memcached'
+        - macro: '{$INT.EXP.SCAN.MAXAGE}'
+          value: 8d
+        - macro: '{$INT.EXP.SCANNER.IP}'
+          description: 'Source IP of the Integrit scan VM as seen by the external proxy (trapper allowed hosts). Set as a global macro.'
+        - macro: '{$INT.EXP.TLS.GRADE.MIN}'
+          value: B
+          description: 'Lowest acceptable nmap ssl-enum-ciphers grade (A best).'
+      valuemaps:
+        - uuid: df6c0a47921a46fe9daac7059b9a2384
+          name: 'INT EXP open/closed'
+          mappings:
+            - value: '0'
+              newvalue: closed
+            - value: '1'
+              newvalue: open
