@@ -1,0 +1,600 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 76f847952e6449c48ffdb876ca24d041
+      name: Templates/Integrit/MON-SECEVT
+  templates:
+    - uuid: 7243cc7e9cd447a9af62818e9298060d
+      template: 'INT MON-SECEVT Linux'
+      name: 'INT MON-SECEVT Linux'
+      description: |
+        Integrit MON-SECEVT for Linux servers (agent 2 active), next to 'INT MON-SRV Linux': SSH brute force, SSH logon from public
+        IPs, sudo to root by unexpected users, local users / groups changed. Not a SIEM. Change problems stay open until closed manually.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-SECEVT
+      items:
+        - uuid: 389844ab2e764dd2a414a3e05bb23e8f
+          name: 'Accounts: /etc/group checksum'
+          type: ZABBIX_ACTIVE
+          key: 'vfs.file.cksum[/etc/group,sha256]'
+          delay: 5m
+          history: 90d
+          value_type: CHAR
+          trends: '0'
+          tags:
+            - tag: component
+              value: accounts
+          triggers:
+            - uuid: 2db47f0a36e344a6a90bf64da3bfd41b
+              expression: 'last(/INT MON-SECEVT Linux/vfs.file.cksum[/etc/group,sha256],#1)<>last(/INT MON-SECEVT Linux/vfs.file.cksum[/etc/group,sha256],#2)'
+              recovery_mode: NONE
+              name: 'INT: Local groups changed on {HOST.NAME}'
+              priority: AVERAGE
+              description: 'Accounts or group memberships changed (new user, new sudo / wheel member). Confirm against a ticket. Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 9d914286164d40708fd53374ba3f5607
+          name: 'Accounts: /etc/passwd checksum'
+          type: ZABBIX_ACTIVE
+          key: 'vfs.file.cksum[/etc/passwd,sha256]'
+          delay: 5m
+          history: 90d
+          value_type: CHAR
+          trends: '0'
+          tags:
+            - tag: component
+              value: accounts
+          triggers:
+            - uuid: e75c0d5b42bf4b478c9159fc311c1f76
+              expression: 'last(/INT MON-SECEVT Linux/vfs.file.cksum[/etc/passwd,sha256],#1)<>last(/INT MON-SECEVT Linux/vfs.file.cksum[/etc/passwd,sha256],#2)'
+              recovery_mode: NONE
+              name: 'INT: Local users changed on {HOST.NAME}'
+              priority: AVERAGE
+              description: 'Accounts or group memberships changed (new user, new sudo / wheel member). Confirm against a ticket. Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 392b4279255b4f13ac10847d76fc86bb
+          name: 'Security events raw'
+          type: ZABBIX_ACTIVE
+          key: 'int.secevt.linux["{$INT.SECEVT.WINDOW}","{$INT.SECEVT.SUDO.USERS}","{$INT.SECEVT.SSH.ALLOW}"]'
+          delay: '{$INT.SECEVT.WINDOW}m'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 30s
+          tags:
+            - tag: component
+              value: raw
+        - uuid: c227d9e4bff440a28a6b9ea5634eee5d
+          name: 'SSH: Failed authentications'
+          type: DEPENDENT
+          key: int.secevt.ssh.failed
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.ssh_failed
+          master_item:
+            key: 'int.secevt.linux["{$INT.SECEVT.WINDOW}","{$INT.SECEVT.SUDO.USERS}","{$INT.SECEVT.SSH.ALLOW}"]'
+          tags:
+            - tag: component
+              value: events
+          triggers:
+            - uuid: 655217b9435d4b6585f5c4a927865bd3
+              expression: 'last(/INT MON-SECEVT Linux/int.secevt.ssh.failed)>{$INT.SECEVT.FAILED.HIGH}'
+              name: 'INT: SSH brute force on {HOST.NAME}: {ITEM.LASTVALUE1} failures in {$INT.SECEVT.WINDOW} min'
+              priority: HIGH
+              description: 'Brute force against SSH. Sources in item "SSH: Failed authentication sources". Consider fail2ban / restricting port 22.'
+              tags:
+                - tag: scope
+                  value: security
+            - uuid: a00243ccd74f4e2e89a3cb0c9d4e7f82
+              expression: 'last(/INT MON-SECEVT Linux/int.secevt.ssh.failed)>{$INT.SECEVT.FAILED.WARN}'
+              name: 'INT: Many SSH authentication failures on {HOST.NAME}: {ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Wrong key / password of a script or an attack.'
+              dependencies:
+                - name: 'INT: SSH brute force on {HOST.NAME}: {ITEM.LASTVALUE1} failures in {$INT.SECEVT.WINDOW} min'
+                  expression: 'last(/INT MON-SECEVT Linux/int.secevt.ssh.failed)>{$INT.SECEVT.FAILED.HIGH}'
+              tags:
+                - tag: scope
+                  value: security
+            - uuid: e90b21a708f74b64819661cd43cc40ce
+              expression: 'nodata(/INT MON-SECEVT Linux/int.secevt.ssh.failed,{$INT.SECEVT.NODATA})=1'
+              name: 'INT: Security event data not received from {HOST.NAME}'
+              priority: WARNING
+              description: 'int-secevt.sh missing, or zabbix cannot read the journal (group systemd-journal / adm).'
+              tags:
+                - tag: scope
+                  value: monitoring
+        - uuid: 33332ddc795a46e2aff0cb38dbae0f47
+          name: 'SSH: Failed authentication sources'
+          type: DEPENDENT
+          key: int.secevt.ssh.ips
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.ssh_ips
+          master_item:
+            key: 'int.secevt.linux["{$INT.SECEVT.WINDOW}","{$INT.SECEVT.SUDO.USERS}","{$INT.SECEVT.SSH.ALLOW}"]'
+          tags:
+            - tag: component
+              value: events
+        - uuid: d4d437a9c369481d8c6cde2c7dc234e2
+          name: 'SSH: Logons from public addresses'
+          type: DEPENDENT
+          key: int.secevt.ssh.public
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.ssh_public
+          master_item:
+            key: 'int.secevt.linux["{$INT.SECEVT.WINDOW}","{$INT.SECEVT.SUDO.USERS}","{$INT.SECEVT.SSH.ALLOW}"]'
+          tags:
+            - tag: component
+              value: events
+          triggers:
+            - uuid: 3c8b6b84ee374159b74df6776451a13f
+              expression: 'last(/INT MON-SECEVT Linux/int.secevt.ssh.public)>0'
+              recovery_mode: NONE
+              name: 'INT: SSH logon from a public IP on {HOST.NAME}'
+              priority: AVERAGE
+              description: 'Successful SSH logon from the internet, not in {$INT.SECEVT.SSH.ALLOW}. Expected admin access: add the source to the macro. Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: bba403935df3461e872758c2b5c06a96
+          name: 'SSH: Public logon sources'
+          type: DEPENDENT
+          key: int.secevt.ssh.public.from
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.ssh_public_from
+          master_item:
+            key: 'int.secevt.linux["{$INT.SECEVT.WINDOW}","{$INT.SECEVT.SUDO.USERS}","{$INT.SECEVT.SSH.ALLOW}"]'
+          tags:
+            - tag: component
+              value: events
+        - uuid: 823ccfc35d054da2837fe31f1201849e
+          name: 'sudo: Root commands by other users'
+          type: DEPENDENT
+          key: int.secevt.sudo.other
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.sudo_other
+          master_item:
+            key: 'int.secevt.linux["{$INT.SECEVT.WINDOW}","{$INT.SECEVT.SUDO.USERS}","{$INT.SECEVT.SSH.ALLOW}"]'
+          tags:
+            - tag: component
+              value: events
+          triggers:
+            - uuid: 881e4d567b194c238d466238b2476b10
+              expression: 'last(/INT MON-SECEVT Linux/int.secevt.sudo.other)>0'
+              recovery_mode: NONE
+              name: 'INT: Unexpected user ran sudo as root on {HOST.NAME}'
+              priority: AVERAGE
+              description: 'User not in {$INT.SECEVT.SUDO.USERS} became root (item "sudo: Users"). Close manually after review.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 46ef4eb4f5804cfbaccf4068214f12dd
+          name: 'sudo: Users'
+          type: DEPENDENT
+          key: int.secevt.sudo.users
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.sudo_users
+          master_item:
+            key: 'int.secevt.linux["{$INT.SECEVT.WINDOW}","{$INT.SECEVT.SUDO.USERS}","{$INT.SECEVT.SSH.ALLOW}"]'
+          tags:
+            - tag: component
+              value: events
+      tags:
+        - tag: service
+          value: MON-SECEVT
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.SECEVT.FAILED.HIGH}'
+          value: '100'
+        - macro: '{$INT.SECEVT.FAILED.WARN}'
+          value: '20'
+        - macro: '{$INT.SECEVT.NODATA}'
+          value: 30m
+        - macro: '{$INT.SECEVT.SSH.ALLOW}'
+          description: 'Comma list of public source IPs or prefixes allowed to log in by SSH, e.g. 203.0.113.10,198.51.100. Empty = none.'
+        - macro: '{$INT.SECEVT.SUDO.USERS}'
+          value: root
+          description: 'Comma list of users expected to use sudo to root (admins of this server), e.g. root,asmir.'
+        - macro: '{$INT.SECEVT.WINDOW}'
+          value: '5'
+    - uuid: 1421565fe4644b739c14ef3a1e1b29f7
+      template: 'INT MON-SECEVT Windows'
+      name: 'INT MON-SECEVT Windows'
+      description: |
+        Integrit MON-SECEVT for Windows member servers (agent 2 active), next to 'INT MON-SRV Windows'. A short list of high-risk
+        security events: log cleared, privileged group change, new local user, audit policy change, new service, new scheduled
+        task, RDP logon from a public IP, Defender detection / real-time protection off, failed logon bursts.
+        Not a SIEM: no log archive, no correlation. Domain controllers: use MON-AD (privileged groups, lockouts).
+        Needs the Integrit audit policy GPO (INSTALL step 2). Event problems stay open until closed manually.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-SECEVT
+      items:
+        - uuid: 150b6a237c884bbc99f0f18aa334507a
+          name: 'Security: Audit log cleared'
+          type: ZABBIX_ACTIVE
+          key: 'eventlog[Security,,,,"^1102$",,skip]'
+          delay: 1m
+          history: 90d
+          value_type: LOG
+          trends: '0'
+          description: 'Security 1102.'
+          tags:
+            - tag: component
+              value: events
+          triggers:
+            - uuid: 851de90bca98427c85cc6f86108dbdc4
+              expression: 'length(last(/INT MON-SECEVT Windows/eventlog[Security,,,,"^1102$",,skip]))>0'
+              recovery_mode: NONE
+              name: 'INT: Security log was cleared on {HOST.NAME}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: DISASTER
+              description: 'Classic attacker step to hide traces. Find who (event text: account), confirm against a ticket, else start incident response. Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 761648ff802b46feb071c9ed6b0f5c34
+          name: 'System: Event log cleared'
+          type: ZABBIX_ACTIVE
+          key: 'eventlog[System,,,"Microsoft-Windows-Eventlog","^104$",,skip]'
+          delay: 1m
+          history: 90d
+          value_type: LOG
+          trends: '0'
+          description: 'System 104 (any log cleared).'
+          tags:
+            - tag: component
+              value: events
+          triggers:
+            - uuid: 5aa1f899cf0b447fa106ab6c0f426426
+              expression: 'length(last(/INT MON-SECEVT Windows/eventlog[System,,,"Microsoft-Windows-Eventlog","^104$",,skip]))>0'
+              recovery_mode: NONE
+              name: 'INT: An event log was cleared on {HOST.NAME}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: DISASTER
+              description: 'A Windows event log was cleared. Confirm against a ticket. Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 9ecb65ca65fd427893a1adb04ee91091
+          name: 'Security: Member added to privileged group'
+          type: ZABBIX_ACTIVE
+          key: 'eventlog[Security,"{$INT.SECEVT.GROUP.MATCHES}",,,"^(4728|4732|4756)$",,skip]'
+          delay: 1m
+          history: 90d
+          value_type: LOG
+          trends: '0'
+          description: 'Security 4728/4732/4756 whose text matches {$INT.SECEVT.GROUP.MATCHES} (EN and CZ group names).'
+          tags:
+            - tag: component
+              value: events
+          triggers:
+            - uuid: 2d7fa4edcbca4f608353d150cd46484a
+              expression: 'length(last(/INT MON-SECEVT Windows/eventlog[Security,"{$INT.SECEVT.GROUP.MATCHES}",,,"^(4728|4732|4756)$",,skip]))>0'
+              recovery_mode: NONE
+              name: 'INT: Member added to a privileged group on {HOST.NAME}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'New local administrator or Remote Desktop user. Match against a ticket; unknown = possible compromise. Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: eb7782a85e6a4b4b9580ce105f01ded1
+          name: 'Security: User account created'
+          type: ZABBIX_ACTIVE
+          key: 'eventlog[Security,,,,"^4720$",,skip]'
+          delay: 1m
+          history: 90d
+          value_type: LOG
+          trends: '0'
+          description: 'Security 4720 (local account on a member server).'
+          tags:
+            - tag: component
+              value: events
+          triggers:
+            - uuid: 584b51961dda43b5a148b076adf680fc
+              expression: 'length(last(/INT MON-SECEVT Windows/eventlog[Security,,,,"^4720$",,skip]))>0'
+              recovery_mode: NONE
+              name: 'INT: Local user account created on {HOST.NAME}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Local accounts on member servers are rare and a persistence technique. Close manually after review.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 1a0a9160119843e5a3d3b96e3fab6e70
+          name: 'Security: Audit policy changed'
+          type: ZABBIX_ACTIVE
+          key: 'eventlog[Security,,,,"^4719$",,skip]'
+          delay: 1m
+          history: 90d
+          value_type: LOG
+          trends: '0'
+          description: 'Security 4719.'
+          tags:
+            - tag: component
+              value: events
+          triggers:
+            - uuid: 6ea9599211a64167a585c08246707c12
+              expression: 'length(last(/INT MON-SECEVT Windows/eventlog[Security,,,,"^4719$",,skip]))>0'
+              recovery_mode: NONE
+              name: 'INT: Audit policy changed on {HOST.NAME}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Audit settings changed outside GPO (attackers switch auditing off). Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 9cd852eb1a074966a0a08e2aa71a4060
+          name: 'System: New service installed'
+          type: ZABBIX_ACTIVE
+          key: 'eventlog[System,"{$INT.SECEVT.SERVICE.REGEX}",,"Service Control Manager","^7045$",,skip]'
+          delay: 1m
+          history: 90d
+          value_type: LOG
+          trends: '0'
+          description: 'System 7045, known installers excluded by {$INT.SECEVT.SERVICE.REGEX}.'
+          tags:
+            - tag: component
+              value: events
+          triggers:
+            - uuid: 16d3cce580cf4096bd3b873c007b6fc9
+              expression: 'length(last(/INT MON-SECEVT Windows/eventlog[System,"{$INT.SECEVT.SERVICE.REGEX}",,"Service Control Manager","^7045$",,skip]))>0'
+              recovery_mode: NONE
+              name: 'INT: New service installed on {HOST.NAME}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Services are a common persistence / lateral movement method (PsExec, remote tools). Unknown service = investigate. Add regular software to the macro. Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: ffaeb0528bdc40828f2058e396b22319
+          name: 'Security: Scheduled task created'
+          type: ZABBIX_ACTIVE
+          key: 'eventlog[Security,"{$INT.SECEVT.TASK.REGEX}",,,"^4698$",,skip]'
+          delay: 1m
+          history: 90d
+          value_type: LOG
+          trends: '0'
+          description: 'Security 4698, known tasks excluded by {$INT.SECEVT.TASK.REGEX} (needs audit "Other Object Access Events").'
+          tags:
+            - tag: component
+              value: events
+          triggers:
+            - uuid: e58e2fcc64224f9da6cabc1970ac2255
+              expression: 'length(last(/INT MON-SECEVT Windows/eventlog[Security,"{$INT.SECEVT.TASK.REGEX}",,,"^4698$",,skip]))>0'
+              recovery_mode: NONE
+              name: 'INT: Scheduled task created on {HOST.NAME}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Review the task (persistence technique). Add regular software tasks to the macro. Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 169f20a10e6e4066beab670c9261349a
+          name: 'RDP: Logon from a public address'
+          type: ZABBIX_ACTIVE
+          key: 'eventlog["Microsoft-Windows-TerminalServices-LocalSessionManager/Operational","{$INT.SECEVT.RDP.PUBLIC.REGEX}",,,"^(21|25)$",,skip]'
+          delay: 1m
+          history: 90d
+          value_type: LOG
+          trends: '0'
+          description: 'LocalSessionManager 21/25 (logon / reconnect) whose source address is not private.'
+          tags:
+            - tag: component
+              value: events
+          triggers:
+            - uuid: fcf26041418641028b410b34943a881c
+              expression: 'length(last(/INT MON-SECEVT Windows/eventlog["Microsoft-Windows-TerminalServices-LocalSessionManager/Operational","{$INT.SECEVT.RDP.PUBLIC.REGEX}",,,"^(21|25)$",,skip]))>0'
+              recovery_mode: NONE
+              name: 'INT: RDP logon from a public IP on {HOST.NAME}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'RDP is reachable from the internet (port forward / exposed) or a VPN hands out public addresses. Exposed RDP is the top ransomware entry point. Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 200c8e2f0b1747b98a641c78a1890068
+          name: 'Defender: Malware detection'
+          type: ZABBIX_ACTIVE
+          key: 'eventlog["Microsoft-Windows-Windows Defender/Operational",,,,"^(1116|1117)$",,skip]'
+          delay: 1m
+          history: 90d
+          value_type: LOG
+          trends: '0'
+          description: 'Defender 1116 detected / 1117 action taken.'
+          tags:
+            - tag: component
+              value: events
+          triggers:
+            - uuid: 11bd3527966448b58dd34164d63de069
+              expression: 'length(last(/INT MON-SECEVT Windows/eventlog["Microsoft-Windows-Windows Defender/Operational",,,,"^(1116|1117)$",,skip]))>0'
+              recovery_mode: NONE
+              name: 'INT: Microsoft Defender detected malware on {HOST.NAME}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'Check the threat and whether the action succeeded (Defender portal / Get-MpThreatDetection). Close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 067fd691f52f4f13b81e303544f00d78
+          name: 'Defender: Real-time protection state'
+          type: ZABBIX_ACTIVE
+          key: 'eventlog["Microsoft-Windows-Windows Defender/Operational",,,,"^(5000|5001)$",,skip]'
+          delay: 1m
+          history: 90d
+          value_type: LOG
+          trends: '0'
+          description: 'Defender 5001 disabled / 5000 enabled.'
+          tags:
+            - tag: component
+              value: events
+          triggers:
+            - uuid: e9aec0cf835e4a9f90167bd65b88cc85
+              expression: 'logeventid(/INT MON-SECEVT Windows/eventlog["Microsoft-Windows-Windows Defender/Operational",,,,"^(5000|5001)$",,skip],,"^5001$")=1'
+              name: 'INT: Defender real-time protection disabled on {HOST.NAME}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'Real-time protection switched off (attacker, or a third-party AV such as ESET took over: then disable this item on the host). Resolves when protection is enabled again (5000).'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 389c36e28d5844bf9dd9831bac99c2a9
+          name: 'Security: Failed logons raw'
+          type: ZABBIX_ACTIVE
+          key: 'int.secevt.failed[{$INT.SECEVT.WINDOW}]'
+          delay: '{$INT.SECEVT.WINDOW}m'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 30s
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 5713691e8ae04780a8ddbb7c1c8597d8
+          name: 'Security: Failed logons'
+          type: DEPENDENT
+          key: int.secevt.failed.count
+          delay: '0'
+          description: 'Security 4625 in the last {$INT.SECEVT.WINDOW} minutes.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.count
+          master_item:
+            key: 'int.secevt.failed[{$INT.SECEVT.WINDOW}]'
+          tags:
+            - tag: component
+              value: logons
+          triggers:
+            - uuid: a3446b5af48f4c1a9d025984289bd447
+              expression: 'last(/INT MON-SECEVT Windows/int.secevt.failed.count)>{$INT.SECEVT.FAILED.HIGH}'
+              name: 'INT: Brute force on {HOST.NAME}: {ITEM.LASTVALUE1} failed logons in {$INT.SECEVT.WINDOW} min'
+              priority: HIGH
+              description: 'Password spraying / brute force. Sources and accounts in items "Security: Failed logons top sources / accounts".'
+              tags:
+                - tag: scope
+                  value: security
+            - uuid: 4502b814a4cc4248a9a6efc2ed276921
+              expression: 'last(/INT MON-SECEVT Windows/int.secevt.failed.count)>{$INT.SECEVT.FAILED.WARN}'
+              name: 'INT: Many failed logons on {HOST.NAME}: {ITEM.LASTVALUE1} in {$INT.SECEVT.WINDOW} min'
+              priority: AVERAGE
+              description: 'Wrong saved password of a service / mapped drive, or an attack. Sources in item "Security: Failed logons top sources".'
+              dependencies:
+                - name: 'INT: Brute force on {HOST.NAME}: {ITEM.LASTVALUE1} failed logons in {$INT.SECEVT.WINDOW} min'
+                  expression: 'last(/INT MON-SECEVT Windows/int.secevt.failed.count)>{$INT.SECEVT.FAILED.HIGH}'
+              tags:
+                - tag: scope
+                  value: security
+            - uuid: 91ab9803003243d882e728f0d0b8542f
+              expression: 'nodata(/INT MON-SECEVT Windows/int.secevt.failed.count,{$INT.SECEVT.NODATA})=1'
+              name: 'INT: Failed logon count not received from {HOST.NAME}'
+              priority: WARNING
+              description: 'int_mon_secevt.ps1 missing or failing (UserParameter test: INSTALL step 5).'
+              tags:
+                - tag: scope
+                  value: monitoring
+        - uuid: b001794fbdd84e66a440ae9dc17cae5b
+          name: 'Security: Failed logons top accounts'
+          type: DEPENDENT
+          key: int.secevt.failed.accounts
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.accounts
+          master_item:
+            key: 'int.secevt.failed[{$INT.SECEVT.WINDOW}]'
+          tags:
+            - tag: component
+              value: logons
+        - uuid: c074289515ee4fb3b770e261a5d094db
+          name: 'Security: Failed logons top sources'
+          type: DEPENDENT
+          key: int.secevt.failed.ips
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.ips
+          master_item:
+            key: 'int.secevt.failed[{$INT.SECEVT.WINDOW}]'
+          tags:
+            - tag: component
+              value: logons
+      tags:
+        - tag: service
+          value: MON-SECEVT
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.SECEVT.FAILED.HIGH}'
+          value: '100'
+        - macro: '{$INT.SECEVT.FAILED.WARN}'
+          value: '20'
+        - macro: '{$INT.SECEVT.GROUP.MATCHES}'
+          value: '(Administrators|Administrátoři|Remote Desktop Users|Uživatelé vzdálené plochy|Backup Operators|Operátoři zálohování|Domain Admins|Enterprise Admins|Schema Admins|Hyper-V Administrators|Správci technologie Hyper-V)'
+          description: 'Regex on the event text (group name, English and Czech Windows).'
+        - macro: '{$INT.SECEVT.NODATA}'
+          value: 30m
+        - macro: '{$INT.SECEVT.RDP.PUBLIC.REGEX}'
+          value: '\b(?!(?:10|127)\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)(?:\d{1,3}\.){3}\d{1,3}\b'
+          description: 'IPv4 that is not private / loopback / link-local / CGNAT. Add own public VPN ranges with another (?!...) if needed.'
+        - macro: '{$INT.SECEVT.SERVICE.REGEX}'
+          value: '^(?![\s\S]*(?:MpKsl|Zabbix|Veeam|ESET|ekrn|Microsoft Edge|edgeupdate|Google Update|gupdate|Mozilla Maintenance|Microsoft Update Health|Windows Defender|WinDefend|Sense|TeamViewer|NinjaRMM|Microsoft Monitoring Agent|Azure))'
+          description: 'Regex the 7045 text must match: negative look-ahead list of regular installers that do NOT alert.'
+        - macro: '{$INT.SECEVT.TASK.REGEX}'
+          value: '^(?![\s\S]*(?:\Microsoft\|GoogleUpdate|MicrosoftEdgeUpdate|Adobe|Mozilla|OneDrive|Veeam|ESET|Zabbix|Office))'
+          description: 'Regex the 4698 text must match: negative look-ahead list of regular tasks that do NOT alert.'
+        - macro: '{$INT.SECEVT.WINDOW}'
+          value: '5'
+          description: 'Minutes counted for failed logons (= collection interval).'
