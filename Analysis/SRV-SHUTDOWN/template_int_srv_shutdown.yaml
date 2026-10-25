@@ -1,0 +1,243 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 47bb9aadbae44fb3b31c1cc5beccce67
+      name: Templates/Integrit/SRV-SHUTDOWN
+  templates:
+    - uuid: 8fbf4b391de04850bcca052af44bc5c3
+      template: 'INT SRV-SHUTDOWN Linux NUT client'
+      name: 'INT SRV-SHUTDOWN Linux NUT client'
+      description: |
+        Integrit SRV-SHUTDOWN on Linux hosts (and Proxmox nodes) shut down by the NUT client upsmon: upsmon running and the UPS
+        reachable through NUT. The UPS itself is monitored by MON-UPS.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/SRV-SHUTDOWN
+      items:
+        - uuid: 64c64692a9e543d49c76795d1e9559bc
+          name: 'NUT client: upsmon processes'
+          type: ZABBIX_ACTIVE
+          key: 'proc.num[upsmon]'
+          delay: 1m
+          tags:
+            - tag: component
+              value: shutdown
+          triggers:
+            - uuid: d67429f0f6594a858beccbc81474cca8
+              expression: 'max(/INT SRV-SHUTDOWN Linux NUT client/proc.num[upsmon],#3)=0'
+              name: 'INT: NUT upsmon is not running on {HOST.NAME}'
+              priority: HIGH
+              description: 'The host will not shut down on a power failure. systemctl status nut-monitor (Debian) / nut-monitor.service.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 38a6cc38cef349c09c39506da26ed23d
+          name: 'NUT client: UPS reachable'
+          type: ZABBIX_ACTIVE
+          key: 'int.shut.nut[{$INT.SHUT.NUT.UPS}]'
+          delay: 1m
+          valuemap:
+            name: 'INT SHUT yes/no'
+          tags:
+            - tag: component
+              value: shutdown
+          triggers:
+            - uuid: bc61f5499787481c9ba3af82f9a9bfc2
+              expression: 'max(/INT SRV-SHUTDOWN Linux NUT client/int.shut.nut[{$INT.SHUT.NUT.UPS}],#3)=0'
+              name: 'INT: NUT client on {HOST.NAME} cannot reach UPS {$INT.SHUT.NUT.UPS}'
+              priority: HIGH
+              description: 'upsc cannot read the UPS (NUT server down, network, wrong name). The host will not get the shutdown signal.'
+              tags:
+                - tag: scope
+                  value: availability
+      tags:
+        - tag: service
+          value: SRV-SHUTDOWN
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.SHUT.NUT.UPS}'
+          description: 'UPS as in upsmon.conf MONITOR line, e.g. ups@192.168.1.10.'
+      valuemaps:
+        - uuid: 740327f7527843d089e9bb4ee14a0b1e
+          name: 'INT SHUT yes/no'
+          mappings:
+            - value: '0'
+              newvalue: 'no'
+            - value: '1'
+              newvalue: 'yes'
+    - uuid: 4b7344a338b44ddaaa95da5e464f7068
+      template: 'INT SRV-SHUTDOWN Plan'
+      name: 'INT SRV-SHUTDOWN Plan'
+      description: |
+        Integrit SRV-SHUTDOWN plan of one UPS-protected environment, linked on the UPS host (next to the MON-UPS template).
+        Tracks the annual controlled shutdown test. Runtime vs shutdown threshold: set {$INT.UPS.RUNTIME.MIN} of the MON-UPS
+        template to shutdown threshold + safety margin (INSTALL).
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/SRV-SHUTDOWN
+      items:
+        - uuid: 52c25c71cb8d44a89bb5437be1c5d14d
+          name: 'Shutdown plan: days since last test'
+          type: SCRIPT
+          key: int.shut.test.age
+          delay: 1d
+          units: d
+          params: |
+            var p = JSON.parse(value);
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(p.last)) {
+                throw '{$INT.SHUT.LAST.TEST} must be YYYY-MM-DD (date of the last shutdown test).';
+            }
+            return Math.floor((Date.now() - Date.parse(p.last + 'T00:00:00Z')) / 86400000);
+          timeout: 5s
+          parameters:
+            - name: last
+              value: '{$INT.SHUT.LAST.TEST}'
+          description: 'Not supported = {$INT.SHUT.LAST.TEST} missing or not a date.'
+          tags:
+            - tag: component
+              value: shutdown
+          triggers:
+            - uuid: ff4a81145fb3410d8115ecc17b0b69b7
+              expression: 'last(/INT SRV-SHUTDOWN Plan/int.shut.test.age)>{$INT.SHUT.TEST.INTERVAL}'
+              name: 'INT: Annual shutdown test of {HOST.NAME} is overdue ({ITEM.LASTVALUE1} since the last test)'
+              priority: WARNING
+              description: 'Plan the controlled test with the customer (maintenance window), then set {$INT.SHUT.LAST.TEST} to the test date.'
+              tags:
+                - tag: scope
+                  value: compliance
+            - uuid: 07e583d4c06d4b37b79ec4a65196b903
+              expression: 'nodata(/INT SRV-SHUTDOWN Plan/int.shut.test.age,2d)=1'
+              name: 'INT: Shutdown test date of {HOST.NAME} is not set'
+              priority: INFO
+              description: 'Set {$INT.SHUT.LAST.TEST} (YYYY-MM-DD).'
+              tags:
+                - tag: scope
+                  value: monitoring
+      tags:
+        - tag: service
+          value: SRV-SHUTDOWN
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.SHUT.LAST.TEST}'
+          description: 'Date of the last controlled shutdown test, YYYY-MM-DD.'
+        - macro: '{$INT.SHUT.TEST.INTERVAL}'
+          value: '365'
+          description: 'Days between tests.'
+    - uuid: a1281e74715f483a871d3bda3f0dac31
+      template: 'INT SRV-SHUTDOWN Windows agent'
+      name: 'INT SRV-SHUTDOWN Windows agent'
+      description: |
+        Integrit SRV-SHUTDOWN on Windows hosts / VMs running the vendor shutdown agent (APC PowerChute Network Shutdown,
+        Eaton IPP / IPM): agent service running, connection to the UPS network card (event log). Shutdown itself is done by the
+        vendor tool, never by Zabbix.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/SRV-SHUTDOWN
+      items:
+        - uuid: 1fa51655dcb7429c866f0180f49e3dd7
+          name: 'Shutdown agent: UPS communication events'
+          type: ZABBIX_ACTIVE
+          key: 'eventlog[Application,"{$INT.SHUT.COMM.REGEX}",,"{$INT.SHUT.EVENT.SOURCE}",,,skip]'
+          delay: 1m
+          history: 90d
+          value_type: LOG
+          trends: '0'
+          description: 'Application log events of the shutdown agent matching lost / restored communication with the UPS.'
+          tags:
+            - tag: component
+              value: shutdown
+          triggers:
+            - uuid: 04fd23df80284b21969d930990b14b78
+              expression: 'find(/INT SRV-SHUTDOWN Windows agent/eventlog[Application,"{$INT.SHUT.COMM.REGEX}",,"{$INT.SHUT.EVENT.SOURCE}",,,skip],,"regexp","{$INT.SHUT.COMMLOST.REGEX}")=1'
+              name: 'INT: Shutdown agent on {HOST.NAME} lost connection to the UPS'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'If power fails now, this host will NOT be shut down cleanly. Check the UPS network card, IP, credentials / pairing. Resolves with the next "communication restored" event.'
+              tags:
+                - tag: scope
+                  value: availability
+      discovery_rules:
+        - uuid: 7244784702f7423fad352f7e72fd6f93
+          name: 'Shutdown agent services from {$INT.SHUT.SERVICES}'
+          type: SCRIPT
+          key: 'int.shut.services.discovery'
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), names = String(p.fields).split(','), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.replace(/\\\|/g, '\u0001').split('|').map(function (x) { return x.replace(/\u0001/g, '|'); }), row = {};
+                if (f.length !== names.length) {
+                    throw 'Entry "' + entry + '" needs ' + names.length + ' fields separated by |: ' + p.fields;
+                }
+                names.forEach(function (n, i) { row[n.trim()] = f[i].trim(); });
+                out.push(row);
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: fields
+              value: '{#SERVICE}'
+            - name: list
+              value: '{$INT.SHUT.SERVICES}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Service names or display names separated by ;.'
+          item_prototypes:
+            - uuid: b68b738fbbb04e63a0191edc6e332fed
+              name: 'Shutdown agent service {#SERVICE}: state'
+              type: ZABBIX_ACTIVE
+              key: 'service.info["{#SERVICE}"]'
+              delay: 1m
+              valuemap:
+                name: 'INT SHUT service state'
+              tags:
+                - tag: component
+                  value: shutdown
+          trigger_prototypes:
+            - uuid: 66e2b2b6e90c401d9f971bfddacc3317
+              expression: 'min(/INT SRV-SHUTDOWN Windows agent/service.info["{#SERVICE}"],#3)<>0'
+              name: 'INT: Shutdown agent {#SERVICE} is not running on {HOST.NAME}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'The host will not shut down on a power failure. Start the service; check why it stopped.'
+              tags:
+                - tag: scope
+                  value: availability
+      tags:
+        - tag: service
+          value: SRV-SHUTDOWN
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.SHUT.COMM.REGEX}'
+          value: '(?i)(communicat|connection|connect|contact).*(lost|fail|restor|establish|unable|cannot)|(lost|restored|established).*(communicat|connection)'
+          description: 'Events about the UPS link (lost and restored).'
+        - macro: '{$INT.SHUT.COMMLOST.REGEX}'
+          value: '(?i)(lost|fail|unable|cannot)'
+          description: 'Of those, the ones meaning the link is down (the last event decides).'
+        - macro: '{$INT.SHUT.EVENT.SOURCE}'
+          value: '(?i)(PowerChute|APC|Eaton|IPP|IPM)'
+          description: 'Event source regex of the shutdown agent.'
+        - macro: '{$INT.SHUT.SERVICES}'
+          description: 'Shutdown agent service names on this host (Get-Service, INSTALL step 2), e.g. PowerChute Network Shutdown.'
+      valuemaps:
+        - uuid: e9bc0a6533084e3abd9fa4acdad7dd4b
+          name: 'INT SHUT service state'
+          mappings:
+            - value: '0'
+              newvalue: Running
+            - value: '6'
+              newvalue: Stopped
+            - value: '7'
+              newvalue: Unknown
+            - value: '255'
+              newvalue: 'No such service'
