@@ -91,3 +91,24 @@ Add the `Services/MON-CUSTOM` group and keep the usual tags. Set the macro(s) fr
    (`int-job-run test false` with `test|1h` in the macro) → HIGH "failed".
 3. File / Log / Process / HTTP / TCP: Latest data shows values within 5 min; break one on purpose (rename the file, stop the process) to see the trigger.
 4. Store the filled check card with the customer documentation.
+
+## Add-on: vendor status pages (`template_int_mon_custom_vendor_status.yaml`)
+
+`INT MON-CUSTOM Vendor status pages` reads the public status page of SaaS / hosting vendors the customer depends on, if the page is
+**Statuspage-compatible** (`<base URL>/api/v2/status.json`, used by Atlassian, GitHub, Cloudflare, Zoom, Dropbox and many hosters).
+Microsoft 365 is covered by MON-M365, Azure by MON-CLOUD.
+
+| Trigger | Severity |
+|---|---|
+| Vendor reports a major / critical incident | AVERAGE |
+| Vendor reports a minor incident | INFO |
+| Status page cannot be read (1 h) | INFO |
+
+Import with the same boxes as above (same template group). Host: one per customer (`<CUST> Vendors`, no interface, external proxy) or
+one Integrit-wide host for vendors many customers use. Macro:
+```
+{$INT.CUSTOM.VENDORS}  GitHub|https://www.githubstatus.com;Cloudflare|https://www.cloudflarestatus.com;Zoom|https://status.zoom.us
+```
+Check a URL first in a browser: `https://www.githubstatus.com/api/v2/status.json` must return JSON with `status.indicator`.
+Vendor pages that are not Statuspage-compatible: use the HTTP check pattern of this service (keyword on the status page).
+Use the vendor's "major incident" trigger as a host-level dependency parent for the customer checks that rely on that vendor.
