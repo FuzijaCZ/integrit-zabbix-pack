@@ -10,9 +10,13 @@
   -Mode dcdiag  : number of failed dcdiag tests (slow, run daily)
   -Mode pdc     : domain-wide data, ONLY on the PDC emulator ({"pdc":0} elsewhere):
                   privileged group members, krbtgt password age, locked-out accounts
+  -Mode accounts: ONLY on the PDC emulator: service accounts (members of -SvcGroup, or with a servicePrincipalName) whose
+                  password expires within -Days or has expired, and enabled accounts whose account expiry date is within -Days
 #>
 param(
-    [Parameter(Mandatory = $true)][ValidateSet('repl', 'sysvol', 'time', 'backup', 'dcdiag', 'pdc')][string]$Mode,
+    [Parameter(Mandatory = $true)][ValidateSet('repl', 'sysvol', 'time', 'backup', 'dcdiag', 'pdc', 'accounts')][string]$Mode,
+    [int]$Days = 14,
+    [string]$SvcGroup = 'INT Service Accounts',
     [string]$Groups = 'Domain Admins,Enterprise Admins,Schema Admins,Administrators,Account Operators,Backup Operators,Server Operators,Print Operators,DnsAdmins,Group Policy Creator Owners'
 )
 
@@ -101,6 +105,39 @@ switch ($Mode) {
             krbtgt_days  = [int]($now - $krbtgt.PasswordLastSet).TotalDays
             locked       = @(Search-ADAccount -LockedOut -UsersOnly).Count
             groups       = $groupsOut
+        })
+    }
+    'accounts' {
+        if ((Get-ADDomain).PDCEmulator -ne $me.HostName) {
+            Out-Json ([ordered]@{ pdc = 0 })
+            break
+        }
+        $limit = $now.AddDays($Days)
+        $props = 'msDS-UserPasswordExpiryTimeComputed', 'PasswordNeverExpires', 'AccountExpirationDate', 'servicePrincipalName', 'Enabled'
+        $svc = @{}
+        try {
+            foreach ($m in (Get-ADGroupMember -Identity $SvcGroup -Recursive | Where-Object { $_.objectClass -eq 'user' })) { $svc[$m.SamAccountName] = 1 }
+        } catch { }   # group does not exist: SPN-based detection only
+        foreach ($u in (Get-ADUser -LDAPFilter '(servicePrincipalName=*)' -Properties servicePrincipalName | Where-Object { $_.SamAccountName -ne 'krbtgt' })) {
+            $svc[$u.SamAccountName] = 1
+        }
+        $expiring = @(); $expired = @()
+        foreach ($name in $svc.Keys) {
+            $u = Get-ADUser -Identity $name -Properties $props
+            if (-not $u.Enabled -or $u.PasswordNeverExpires) { continue }
+            $raw = $u.'msDS-UserPasswordExpiryTimeComputed'
+            if (-not $raw -or $raw -eq 0 -or $raw -eq 9223372036854775807) { continue }
+            $exp = [datetime]::FromFileTime($raw)
+            if ($exp -lt $now) { $expired += ('{0} ({1:yyyy-MM-dd})' -f $name, $exp) }
+            elseif ($exp -lt $limit) { $expiring += ('{0} ({1:yyyy-MM-dd})' -f $name, $exp) }
+        }
+        $acct = @(Search-ADAccount -AccountExpiring -TimeSpan (New-TimeSpan -Days $Days) -UsersOnly | Where-Object { $_.Enabled } |
+                  ForEach-Object { '{0} ({1:yyyy-MM-dd})' -f $_.SamAccountName, $_.AccountExpirationDate })
+        Out-Json ([ordered]@{
+            pdc = 1; svc_total = $svc.Count
+            svc_expiring = $expiring.Count; svc_expiring_list = (($expiring | Select-Object -First 8) -join ', ')
+            svc_expired = $expired.Count; svc_expired_list = (($expired | Select-Object -First 8) -join ', ')
+            acct_expiring = $acct.Count; acct_expiring_list = (($acct | Select-Object -First 8) -join ', ')
         })
     }
 }

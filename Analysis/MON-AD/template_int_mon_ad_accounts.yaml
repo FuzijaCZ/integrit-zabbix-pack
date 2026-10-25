@@ -1,0 +1,186 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 285aa027e7c24a8981ac7058cdd69e97
+      name: Templates/Integrit/MON-AD
+  templates:
+    - uuid: 498196c74c5c47b08970d4386f637cb1
+      template: 'INT MON-AD Service accounts'
+      name: 'INT MON-AD Service accounts'
+      description: |
+        Integrit MON-AD add-on: service account passwords expiring / expired (members of {$INT.AD.SVC.GROUP} or accounts with a
+        servicePrincipalName, exact expiry from msDS-UserPasswordExpiryTimeComputed) and user accounts with an expiry date.
+        Linked on every DC next to 'INT MON-AD Domain controller'; only the PDC emulator reports.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-AD
+      items:
+        - uuid: 6a7fc1f402e7431fa3c6c3b0b8b8df27
+          name: 'Accounts raw'
+          type: ZABBIX_ACTIVE
+          key: 'int.ad.accounts[{$INT.AD.ACCOUNTS.DAYS},{$INT.AD.SVC.GROUP}]'
+          delay: 6h
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 120s
+          description: 'int_mon_ad.ps1 -Mode accounts. Only the PDC emulator returns data.'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: cd3a136aae184480aacb739b9d52d9c1
+          name: 'Service accounts: password expired'
+          type: DEPENDENT
+          key: int.ad.svc.expired
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.svc_expired
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.ad.accounts[{$INT.AD.ACCOUNTS.DAYS},{$INT.AD.SVC.GROUP}]'
+          tags:
+            - tag: component
+              value: accounts
+          triggers:
+            - uuid: 01ae75e0e8634e70ba3f27bf6348b4e2
+              expression: 'last(/INT MON-AD Service accounts/int.ad.svc.expired)>0 and length(last(/INT MON-AD Service accounts/int.ad.svc.expired.list))>=0'
+              name: 'INT: Service account password expired in {$INT.AD.DOMAIN}'
+              opdata: '{ITEM.LASTVALUE2}'
+              priority: HIGH
+              description: 'The services / scheduled tasks / backups running under these accounts fail at their next logon (list in opdata). Set a new password everywhere it is stored, or move to a gMSA.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: a387b685848f4398bafa35ba9ff4e54f
+          name: 'Service accounts: password expired list'
+          type: DEPENDENT
+          key: int.ad.svc.expired.list
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.svc_expired_list
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.ad.accounts[{$INT.AD.ACCOUNTS.DAYS},{$INT.AD.SVC.GROUP}]'
+          tags:
+            - tag: component
+              value: accounts
+        - uuid: 85bebf8a579b453ca28df3e175872e3c
+          name: 'Service accounts: password expiring'
+          type: DEPENDENT
+          key: int.ad.svc.expiring
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.svc_expiring
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.ad.accounts[{$INT.AD.ACCOUNTS.DAYS},{$INT.AD.SVC.GROUP}]'
+          tags:
+            - tag: component
+              value: accounts
+          triggers:
+            - uuid: 5376216ac02243a1b63f1a11830f36ef
+              expression: 'last(/INT MON-AD Service accounts/int.ad.svc.expiring)>0 and length(last(/INT MON-AD Service accounts/int.ad.svc.expiring.list))>=0'
+              name: 'INT: Service account password expires within {$INT.AD.ACCOUNTS.DAYS} days in {$INT.AD.DOMAIN}'
+              opdata: '{ITEM.LASTVALUE2}'
+              priority: AVERAGE
+              description: 'Plan the password change with the application owner (list in opdata), or set a fine-grained password policy / gMSA.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 8cbd80dc6f4b45b98852e023ae90ab58
+          name: 'Service accounts: password expiring list'
+          type: DEPENDENT
+          key: int.ad.svc.expiring.list
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.svc_expiring_list
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.ad.accounts[{$INT.AD.ACCOUNTS.DAYS},{$INT.AD.SVC.GROUP}]'
+          tags:
+            - tag: component
+              value: accounts
+        - uuid: 09f568c7ee164f93a114c7d7fe46ca70
+          name: 'Service accounts: monitored'
+          type: DEPENDENT
+          key: int.ad.svc.total
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.svc_total
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.ad.accounts[{$INT.AD.ACCOUNTS.DAYS},{$INT.AD.SVC.GROUP}]'
+          tags:
+            - tag: component
+              value: accounts
+        - uuid: 93748fd9fe194b61b70b00ebb58364f1
+          name: 'User accounts: account expiring'
+          type: DEPENDENT
+          key: int.ad.acct.expiring
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.acct_expiring
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.ad.accounts[{$INT.AD.ACCOUNTS.DAYS},{$INT.AD.SVC.GROUP}]'
+          tags:
+            - tag: component
+              value: accounts
+          triggers:
+            - uuid: f36ac1032f7f4597a86b2572460f44f7
+              expression: 'last(/INT MON-AD Service accounts/int.ad.acct.expiring)>0 and length(last(/INT MON-AD Service accounts/int.ad.acct.expiring.list))>=0'
+              name: 'INT: User accounts expire within {$INT.AD.ACCOUNTS.DAYS} days in {$INT.AD.DOMAIN}'
+              opdata: '{ITEM.LASTVALUE2}'
+              priority: INFO
+              description: 'Accounts with an expiry date (contractors, temporary staff): confirm with the customer whether to extend (report).'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 3e94dd20f2e144f1b338820ab6caec2c
+          name: 'User accounts: account expiring list'
+          type: DEPENDENT
+          key: int.ad.acct.expiring.list
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.acct_expiring_list
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.ad.accounts[{$INT.AD.ACCOUNTS.DAYS},{$INT.AD.SVC.GROUP}]'
+          tags:
+            - tag: component
+              value: accounts
+      tags:
+        - tag: service
+          value: MON-AD
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.AD.ACCOUNTS.DAYS}'
+          value: '14'
+        - macro: '{$INT.AD.DOMAIN}'
+          description: 'AD domain DNS name (same as in INT MON-AD Domain controller).'
+        - macro: '{$INT.AD.SVC.GROUP}'
+          value: 'INT Service Accounts'
+          description: 'AD group listing service accounts (in addition to accounts with an SPN). Letters, digits and spaces only.'
