@@ -1,0 +1,628 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: ebaaf573555e42c99edf971bbe94e460
+      name: Templates/Integrit/MON-SRV
+  templates:
+    - uuid: 1828b044f6464d329e6659cc5d3b83bc
+      template: 'INT MON-SRV Windows'
+      name: 'INT MON-SRV Windows'
+      description: |
+        Integrit MON-SRV wrapper for Windows Server 2016-2025 (Zabbix agent 2 7.0, active only).
+        Links the official 'Windows by Zabbix agent active' and overrides its macros:
+        agent loss alerts after 3 min (HIGH), filesystem WARNING 85 % / AVERAGE 95 %.
+        Adds: FS HIGH 98 % and 'full in < 14 days', critical services list (HIGH), scheduled tasks,
+        Windows Update status, time drift, repeated disk/NTFS/VSS event log errors,
+        DISASTER on agent loss for tier=critical hosts ({$INT.TIER.CRITICAL}=1).
+        Requires windows/int_mon_srv.conf and windows/int_mon_srv.ps1 on the agent. See INSTALL.md.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'Windows by Zabbix agent active'
+      groups:
+        - name: Templates/Integrit/MON-SRV
+      items:
+        - uuid: 7e7d229ce94a4f18a7f5194f29d53adf
+          name: 'INT: Windows Update: Get status'
+          type: ZABBIX_ACTIVE
+          key: int.win.updates
+          delay: 6h
+          history: 1d
+          value_type: TEXT
+          trends: '0'
+          timeout: 5m
+          description: 'JSON from int_mon_srv.ps1 -Mode updates (Windows Update API search, reboot flags, last installed update).'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 40746bd5c7b94a04b78faaa9ac247d14
+          name: 'INT: Windows Update: Days since last installed update'
+          type: DEPENDENT
+          key: int.win.updates.lastpatch
+          delay: '0'
+          units: d
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.last_patch_days
+          master_item:
+            key: int.win.updates
+          tags:
+            - tag: component
+              value: updates
+        - uuid: 4143680fd53f41d08273463bb1508915
+          name: 'INT: Windows Update: Reboot required'
+          type: DEPENDENT
+          key: int.win.updates.reboot
+          delay: '0'
+          valuemap:
+            name: 'INT yes/no'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.reboot_required
+          master_item:
+            key: int.win.updates
+          tags:
+            - tag: component
+              value: updates
+        - uuid: c59d60f1ae3746f99517929dea2bd632
+          name: 'INT: Windows Update: Pending security/critical updates'
+          type: DEPENDENT
+          key: int.win.updates.security
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.security
+          master_item:
+            key: int.win.updates
+          tags:
+            - tag: component
+              value: updates
+        - uuid: 5a1fd1f48f48472082864e425b68ed08
+          name: 'INT: Windows Update: Oldest pending security update age'
+          type: DEPENDENT
+          key: int.win.updates.security.oldest
+          delay: '0'
+          units: d
+          description: 'Days since the oldest pending security/critical update was released (0 = none pending).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.security_oldest_days
+          master_item:
+            key: int.win.updates
+          tags:
+            - tag: component
+              value: updates
+        - uuid: 55fd099a9b3c4f058bdbf0a6355cf595
+          name: 'INT: Windows Update: Pending updates total'
+          type: DEPENDENT
+          key: int.win.updates.total
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.total
+          master_item:
+            key: int.win.updates
+          tags:
+            - tag: component
+              value: updates
+          triggers:
+            - uuid: eb2dfada5cee49c2a18e9cf54c6fdd39
+              expression: 'nodata(/INT MON-SRV Windows/int.win.updates.total,{$INT.UPDATES.NODATA})=1'
+              name: 'INT: Windows Update status has no data for {$INT.UPDATES.NODATA}'
+              priority: WARNING
+              description: 'The update check script returns nothing or fails (timeout, Windows Update service disabled, script missing). Check item "INT: Windows Update: Get status".'
+              dependencies:
+                - name: 'Windows: Active checks are not available'
+                  expression: 'min(/INT MON-SRV Windows/zabbix[host,active_agent,available],{$AGENT.TIMEOUT})=2'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 6f7118d7bb8f48fbb714d9863beb9b73
+          name: 'INT: Scheduled tasks: Get status'
+          type: ZABBIX_ACTIVE
+          key: int.win.tasks
+          delay: 5m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 1m
+          description: 'JSON array of all non-Microsoft scheduled tasks from int_mon_srv.ps1 -Mode tasks.'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 2f47b147a4d549b5b749d0108a968bd9
+          name: 'INT: Time: Get status'
+          type: ZABBIX_ACTIVE
+          key: 'int.win.time[{$INT.NTP.REF}]'
+          delay: 15m
+          history: 1d
+          value_type: TEXT
+          trends: '0'
+          timeout: 30s
+          description: 'JSON from int_mon_srv.ps1 -Mode time: w32tm source, synchronisation flag and offset against the NTP source (or {$INT.NTP.REF} when set).'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 95872b2ddb8941be946caf4da8b27452
+          name: 'INT: Time: Offset to NTP source'
+          type: DEPENDENT
+          key: int.win.time.offset
+          delay: '0'
+          value_type: FLOAT
+          units: s
+          description: 'Positive = local clock is ahead. No value when the source cannot be measured (e.g. Hyper-V time provider without {$INT.NTP.REF}).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.offset
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.win.time[{$INT.NTP.REF}]'
+          tags:
+            - tag: component
+              value: time
+          triggers:
+            - uuid: b2ec514dacea4298bcd8bf6353dad4a9
+              expression: 'abs(last(/INT MON-SRV Windows/int.win.time.offset))>{$INT.TIME.DRIFT.MAX}'
+              name: 'INT: Time drift is more than {$INT.TIME.DRIFT.MAX}s'
+              opdata: 'Offset: {ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Kerberos fails at 5 min drift; logs and scheduled jobs become unreliable earlier.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: d76b29a8656c4a08804749db5ce0e0c5
+          name: 'INT: Time: Source'
+          type: DEPENDENT
+          key: int.win.time.source
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.source
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          master_item:
+            key: 'int.win.time[{$INT.NTP.REF}]'
+          tags:
+            - tag: component
+              value: time
+        - uuid: 9db5fbcb092e46ddad5c0d83d670ffb9
+          name: 'INT: Time: Synchronised'
+          type: DEPENDENT
+          key: int.win.time.synced
+          delay: '0'
+          valuemap:
+            name: 'INT yes/no'
+          description: '0 when w32tm runs on Local CMOS Clock / Free-running System Clock.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.synced
+          master_item:
+            key: 'int.win.time[{$INT.NTP.REF}]'
+          tags:
+            - tag: component
+              value: time
+          triggers:
+            - uuid: cdb6316cb14244e1801616edc3b1855a
+              expression: 'max(/INT MON-SRV Windows/int.win.time.synced,{$INT.TIME.UNSYNC.PERIOD})=0'
+              name: 'INT: Time is not synchronised for {$INT.TIME.UNSYNC.PERIOD}'
+              priority: WARNING
+              description: 'w32tm has no network time source. The clock will drift.'
+              dependencies:
+                - name: 'INT: Time drift is more than {$INT.TIME.DRIFT.MAX}s'
+                  expression: 'abs(last(/INT MON-SRV Windows/int.win.time.offset))>{$INT.TIME.DRIFT.MAX}'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 9c9e221b5fc0477184ee07c4cc796715
+          name: 'INT: Event log: Application VSS errors'
+          type: ZABBIX_ACTIVE
+          key: 'eventlog[Application,,"^(?:Error|Critical)$","{$INT.EVENTLOG.APP.SOURCE}",,,skip]'
+          delay: 1m
+          history: 31d
+          value_type: LOG
+          trends: '0'
+          description: 'Error/Critical events in Application log from sources matching {$INT.EVENTLOG.APP.SOURCE} (default VSS).'
+          tags:
+            - tag: component
+              value: eventlog
+          triggers:
+            - uuid: 6766dc52b1844fea8028edcec6ed3c6b
+              expression: 'count(/INT MON-SRV Windows/eventlog[Application,,"^(?:Error|Critical)$","{$INT.EVENTLOG.APP.SOURCE}",,,skip],{$INT.EVENTLOG.PERIOD})>={$INT.EVENTLOG.COUNT.MAX}'
+              name: 'INT: Repeated VSS errors in Application log'
+              opdata: 'Last: {ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'At least {$INT.EVENTLOG.COUNT.MAX} errors within {$INT.EVENTLOG.PERIOD}. Shadow copies and image backups may fail.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 5e380a097f1b4170a9848f78d64702fb
+          name: 'INT: Event log: System disk/storage errors'
+          type: ZABBIX_ACTIVE
+          key: 'eventlog[System,,"^(?:Error|Critical)$","{$INT.EVENTLOG.SYSTEM.SOURCE}",,,skip]'
+          delay: 1m
+          history: 31d
+          value_type: LOG
+          trends: '0'
+          description: 'Error/Critical events in System log from disk, NTFS, volume and storage controller sources ({$INT.EVENTLOG.SYSTEM.SOURCE}).'
+          tags:
+            - tag: component
+              value: eventlog
+          triggers:
+            - uuid: e02c3344639e482988e4304fde3eb413
+              expression: 'count(/INT MON-SRV Windows/eventlog[System,,"^(?:Error|Critical)$","{$INT.EVENTLOG.SYSTEM.SOURCE}",,,skip],{$INT.EVENTLOG.PERIOD})>={$INT.EVENTLOG.COUNT.MAX}'
+              name: 'INT: Repeated disk/storage errors in System log'
+              opdata: 'Last: {ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'At least {$INT.EVENTLOG.COUNT.MAX} errors within {$INT.EVENTLOG.PERIOD} (bad blocks, controller resets, NTFS corruption, shadow copy loss).'
+              tags:
+                - tag: scope
+                  value: availability
+      discovery_rules:
+        - uuid: adcb6505b0af4f1383735c2fdf180f83
+          name: 'INT: Critical services discovery'
+          type: ZABBIX_ACTIVE
+          key: 'wmi.getall[root\cimv2,"select Name,DisplayName from Win32_Service"]'
+          delay: 1h
+          filter:
+            conditions:
+              - macro: '{#SERVICE.NAME}'
+                value: '{$INT.SERVICE.CRIT.MATCHES}'
+                formulaid: A
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Discovers only the services listed in {$INT.SERVICE.CRIT.MATCHES} (role list, set per host). Exclude the same names from the official discovery via {$SERVICE.NAME.NOT_MATCHES} to avoid a second AVERAGE alert.'
+          item_prototypes:
+            - uuid: 9a9ca4d0da4849218ce207a4418866c2
+              name: 'INT: Critical service "{#SERVICE.NAME}" ({#SERVICE.DISPLAYNAME}): State'
+              type: ZABBIX_ACTIVE
+              key: 'service.info["{#SERVICE.NAME}"]'
+              delay: 1m
+              valuemap:
+                name: 'INT Windows service state'
+              preprocessing:
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1h
+              tags:
+                - tag: component
+                  value: service
+              trigger_prototypes:
+                - uuid: c68e3f0620c5402fbffe952e58dfaaf1
+                  expression: 'min(/INT MON-SRV Windows/service.info["{#SERVICE.NAME}"],#3)<>0'
+                  name: 'INT: Critical service "{#SERVICE.NAME}" ({#SERVICE.DISPLAYNAME}) is not running'
+                  opdata: 'State: {ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'Service from the Integrit critical list for this server role is not running for 3 checks.'
+                  tags:
+                    - tag: scope
+                      value: availability
+          lld_macro_paths:
+            - lld_macro: '{#SERVICE.DISPLAYNAME}'
+              path: $.DisplayName
+            - lld_macro: '{#SERVICE.NAME}'
+              path: $.Name
+        - uuid: dd5ea777ffff4201b65657d6bce6e17d
+          name: 'INT: Filesystem space discovery'
+          type: DEPENDENT
+          key: int.vfs.fs.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#FSDRIVETYPE}'
+                value: '{$VFS.FS.FSDRIVETYPE.MATCHES}'
+                formulaid: A
+              - macro: '{#FSDRIVETYPE}'
+                value: '{$VFS.FS.FSDRIVETYPE.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: B
+              - macro: '{#FSNAME}'
+                value: '{$VFS.FS.FSNAME.MATCHES}'
+                formulaid: C
+              - macro: '{#FSNAME}'
+                value: '{$VFS.FS.FSNAME.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: D
+              - macro: '{#FSTYPE}'
+                value: '{$VFS.FS.FSTYPE.MATCHES}'
+                formulaid: E
+              - macro: '{#FSTYPE}'
+                value: '{$VFS.FS.FSTYPE.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: F
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Same filesystems and filter macros as the official discovery. Adds HIGH at {$INT.VFS.FS.PUSED.MAX.HIGH} % and the 14-day fill forecast.'
+          item_prototypes:
+            - uuid: 8a609cce05224d58a73699d49ad3b73e
+              name: 'INT: FS [{#FSLABEL}({#FSNAME})]: Space used, in %'
+              type: DEPENDENT
+              key: 'int.vfs.fs.pused[{#FSNAME}]'
+              delay: '0'
+              value_type: FLOAT
+              units: '%'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.[?(@.fsname==''{#FSNAME}'')].bytes.pused.first()'
+              master_item:
+                key: vfs.fs.get
+              tags:
+                - tag: component
+                  value: storage
+                - tag: filesystem
+                  value: '{#FSNAME}'
+              trigger_prototypes:
+                - uuid: 498fc337effa41a38870ea98b1726757
+                  expression: 'min(/INT MON-SRV Windows/int.vfs.fs.pused[{#FSNAME}],5m)>{$INT.VFS.FS.PUSED.MAX.HIGH:"{#FSNAME}"}'
+                  name: 'INT: FS [{#FSLABEL}({#FSNAME})]: Space is almost exhausted (> {$INT.VFS.FS.PUSED.MAX.HIGH:"{#FSNAME}"}%)'
+                  opdata: 'Space used: {{ITEM.LASTVALUE1}.fmtnum(1)}%'
+                  priority: HIGH
+                  description: 'Writes will fail soon. The official AVERAGE trigger (> {$VFS.FS.PUSED.MAX.CRIT}%) is also active.'
+                  tags:
+                    - tag: scope
+                      value: capacity
+                - uuid: 3ccab469667d4334b2287015cdcf7bdb
+                  expression: |
+                    timeleft(/INT MON-SRV Windows/int.vfs.fs.pused[{#FSNAME}],{$INT.VFS.FS.TIMELEFT.PERIOD},100)<{$INT.VFS.FS.TIMELEFT.MIN:"{#FSNAME}"}
+                    and last(/INT MON-SRV Windows/int.vfs.fs.pused[{#FSNAME}])>{$INT.VFS.FS.TIMELEFT.PUSED.MIN:"{#FSNAME}"}
+                  name: 'INT: FS [{#FSLABEL}({#FSNAME})]: Will be full in less than {$INT.VFS.FS.TIMELEFT.MIN:"{#FSNAME}"}'
+                  opdata: 'Space used: {{ITEM.LASTVALUE1}.fmtnum(1)}%'
+                  priority: AVERAGE
+                  description: 'Linear forecast over {$INT.VFS.FS.TIMELEFT.PERIOD}; only evaluated above {$INT.VFS.FS.TIMELEFT.PUSED.MIN:"{#FSNAME}"} % used.'
+                  dependencies:
+                    - name: 'INT: FS [{#FSLABEL}({#FSNAME})]: Space is almost exhausted (> {$INT.VFS.FS.PUSED.MAX.HIGH:"{#FSNAME}"}%)'
+                      expression: 'min(/INT MON-SRV Windows/int.vfs.fs.pused[{#FSNAME}],5m)>{$INT.VFS.FS.PUSED.MAX.HIGH:"{#FSNAME}"}'
+                  tags:
+                    - tag: scope
+                      value: capacity
+          master_item:
+            key: vfs.fs.get
+          lld_macro_paths:
+            - lld_macro: '{#FSDRIVETYPE}'
+              path: $.fsdrivetype
+            - lld_macro: '{#FSLABEL}'
+              path: $.fslabel
+            - lld_macro: '{#FSNAME}'
+              path: $.fsname
+            - lld_macro: '{#FSTYPE}'
+              path: $.fstype
+        - uuid: ea4866addff9417db00cad5ed8f70fa2
+          name: 'INT: Scheduled tasks discovery'
+          type: DEPENDENT
+          key: int.win.tasks.discovery
+          delay: '0'
+          filter:
+            evaltype: OR
+            conditions:
+              - macro: '{#TASK.PATH}'
+                value: '{$INT.TASK.PATH.MATCHES}'
+                formulaid: A
+              - macro: '{#TASK.NAME}'
+                value: '{$INT.TASK.NAME.MATCHES}'
+                formulaid: B
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Tasks in folder {$INT.TASK.PATH.MATCHES} or named {$INT.TASK.NAME.MATCHES}.'
+          item_prototypes:
+            - uuid: b1f53b69b1af4e438123599172f9ba44
+              name: 'INT: Task [{#TASK.PATH}{#TASK.NAME}]: Time since last run'
+              type: DEPENDENT
+              key: 'int.win.task.age[{#TASK.KEY}]'
+              delay: '0'
+              value_type: FLOAT
+              units: s
+              description: '-1 = never run.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.[?(@.key==''{#TASK.KEY}'')].last_run_age.first()'
+              master_item:
+                key: int.win.tasks
+              tags:
+                - tag: component
+                  value: task
+                - tag: task
+                  value: '{#TASK.NAME}'
+              trigger_prototypes:
+                - uuid: 0adbf447e95f44aa9d95bcc10f7a1fda
+                  expression: 'last(/INT MON-SRV Windows/int.win.task.age[{#TASK.KEY}])>{$INT.TASK.MAX.AGE:"{#TASK.NAME}"}'
+                  name: 'INT: Task [{#TASK.PATH}{#TASK.NAME}] has not run for more than {$INT.TASK.MAX.AGE:"{#TASK.NAME}"}'
+                  opdata: 'Last run: {ITEM.LASTVALUE1} ago'
+                  priority: AVERAGE
+                  description: 'Task is disabled, its trigger was removed or the server was off. Weekly/monthly tasks need {$INT.TASK.MAX.AGE:"<task name>"} on the host.'
+                  tags:
+                    - tag: scope
+                      value: availability
+            - uuid: 6e429ec7580d431597a033aa9599d52d
+              name: 'INT: Task [{#TASK.PATH}{#TASK.NAME}]: Last result'
+              type: DEPENDENT
+              key: 'int.win.task.result[{#TASK.KEY}]'
+              delay: '0'
+              description: '0 = success. 267008/267009/267011 (ready/running/not yet run) are not failures.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.[?(@.key==''{#TASK.KEY}'')].last_result.first()'
+              master_item:
+                key: int.win.tasks
+              tags:
+                - tag: component
+                  value: task
+                - tag: task
+                  value: '{#TASK.NAME}'
+              trigger_prototypes:
+                - uuid: e4e6223096d84e5bbe3b46c931cfd18b
+                  expression: |
+                    last(/INT MON-SRV Windows/int.win.task.result[{#TASK.KEY}])<>0
+                    and last(/INT MON-SRV Windows/int.win.task.result[{#TASK.KEY}])<>267008
+                    and last(/INT MON-SRV Windows/int.win.task.result[{#TASK.KEY}])<>267009
+                    and last(/INT MON-SRV Windows/int.win.task.result[{#TASK.KEY}])<>267011
+                  name: 'INT: Task [{#TASK.PATH}{#TASK.NAME}] failed'
+                  opdata: 'Last result: {ITEM.LASTVALUE1}'
+                  priority: AVERAGE
+                  description: 'Last run result is not 0. Decimal code; convert to hex for Microsoft docs (e.g. 2147942401 = 0x80070001).'
+                  tags:
+                    - tag: scope
+                      value: availability
+            - uuid: 144388b700cf41d5ba7a635445293493
+              name: 'INT: Task [{#TASK.PATH}{#TASK.NAME}]: State'
+              type: DEPENDENT
+              key: 'int.win.task.state[{#TASK.KEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.[?(@.key==''{#TASK.KEY}'')].state.first()'
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1d
+              master_item:
+                key: int.win.tasks
+              tags:
+                - tag: component
+                  value: task
+                - tag: task
+                  value: '{#TASK.NAME}'
+          master_item:
+            key: int.win.tasks
+          lld_macro_paths:
+            - lld_macro: '{#TASK.KEY}'
+              path: $.key
+            - lld_macro: '{#TASK.NAME}'
+              path: $.name
+            - lld_macro: '{#TASK.PATH}'
+              path: $.path
+      tags:
+        - tag: service
+          value: MON-SRV
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$AGENT.TIMEOUT}'
+          value: 3m
+          description: 'Override of official 5m: HIGH "Active checks are not available" after 3 min (draft 4.1).'
+        - macro: '{$INT.EVENTLOG.APP.SOURCE}'
+          value: '^(?:VSS)$'
+          description: 'Application log sources counted as errors. Extend per role on the host.'
+        - macro: '{$INT.EVENTLOG.COUNT.MAX}'
+          value: '3'
+          description: 'Errors within {$INT.EVENTLOG.PERIOD} that raise AVERAGE.'
+        - macro: '{$INT.EVENTLOG.PERIOD}'
+          value: 15m
+        - macro: '{$INT.EVENTLOG.SYSTEM.SOURCE}'
+          value: '^(?:disk|Disk|Ntfs|Microsoft-Windows-Ntfs|volmgr|volsnap|storahci|stornvme|storvsc|iaStorA|iaStorAC|iaStorAVC|iaStorV|LSI_SAS|LSI_SAS2i|LSI_SAS3i|megasas|megasas2i|megasas35i|percsas2i|percsas3i|HpCISSs2|HpCISSs3|SmartPqi|mpio|msdsm)$'
+          description: 'System log sources for disk, filesystem and storage controller errors.'
+        - macro: '{$INT.NTP.REF}'
+          description: 'Optional NTP host (letters, digits, dots, dashes) to measure offset against. Empty = configured w32tm source.'
+        - macro: '{$INT.REBOOT.PENDING.MAX.AGE}'
+          value: '7'
+          description: 'Days a pending reboot after the last installed update is tolerated.'
+        - macro: '{$INT.SERVICE.CRIT.MATCHES}'
+          value: '^$'
+          description: 'Regex of critical service names for this server role, set per host (see INSTALL.md presets). Default matches nothing.'
+        - macro: '{$INT.TASK.MAX.AGE}'
+          value: 25h
+          description: 'Max time since last run. Use context per task name, e.g. {$INT.TASK.MAX.AGE:"Weekly report"}=8d.'
+        - macro: '{$INT.TASK.NAME.MATCHES}'
+          value: '^INT-'
+          description: 'Tasks with this name prefix are monitored wherever they are.'
+        - macro: '{$INT.TASK.PATH.MATCHES}'
+          value: '^\\Integrit\\'
+          description: 'Tasks in this Task Scheduler folder are monitored.'
+        - macro: '{$INT.TIER.CRITICAL}'
+          value: '0'
+          description: 'Set 1 on hosts with tag tier=critical: agent loss becomes DISASTER.'
+        - macro: '{$INT.TIME.DRIFT.MAX}'
+          value: '60'
+          description: 'Max absolute clock offset in seconds.'
+        - macro: '{$INT.TIME.UNSYNC.PERIOD}'
+          value: 1h
+        - macro: '{$INT.UPDATES.NODATA}'
+          value: 25h
+        - macro: '{$INT.UPDATES.SEC.MAX.AGE}'
+          value: '14'
+          description: 'Days a released security/critical update may stay uninstalled.'
+        - macro: '{$INT.VFS.FS.PUSED.MAX.HIGH}'
+          value: '98'
+          description: 'FS used % for HIGH. Context per FS name, e.g. {$INT.VFS.FS.PUSED.MAX.HIGH:"D:"}.'
+        - macro: '{$INT.VFS.FS.TIMELEFT.MIN}'
+          value: 14d
+        - macro: '{$INT.VFS.FS.TIMELEFT.PERIOD}'
+          value: 7d
+          description: 'History window for the fill forecast.'
+        - macro: '{$INT.VFS.FS.TIMELEFT.PUSED.MIN}'
+          value: '70'
+          description: 'Forecast is ignored below this FS used % (avoids noise on near-empty volumes).'
+        - macro: '{$VFS.FS.PUSED.MAX.CRIT}'
+          value: '95'
+          description: 'Override of official 90: AVERAGE at 95 %.'
+        - macro: '{$VFS.FS.PUSED.MAX.WARN}'
+          value: '85'
+          description: 'Override of official 80: WARNING at 85 %.'
+      valuemaps:
+        - uuid: e18ca121c5d3465fb7d707ec2c4d4da0
+          name: 'INT Windows service state'
+          mappings:
+            - value: '0'
+              newvalue: Running
+            - value: '1'
+              newvalue: Paused
+            - value: '2'
+              newvalue: 'Start pending'
+            - value: '3'
+              newvalue: 'Pause pending'
+            - value: '4'
+              newvalue: 'Continue pending'
+            - value: '5'
+              newvalue: 'Stop pending'
+            - value: '6'
+              newvalue: Stopped
+            - value: '7'
+              newvalue: Unknown
+            - value: '255'
+              newvalue: 'No such service'
+        - uuid: 7675d510cbbc411a8cf5809cf9944a49
+          name: 'INT yes/no'
+          mappings:
+            - value: '0'
+              newvalue: 'No'
+            - value: '1'
+              newvalue: 'Yes'
+  triggers:
+    - uuid: e2303c2441d347b19132605ed83a6065
+      expression: 'min(/INT MON-SRV Windows/zabbix[host,active_agent,available],{$AGENT.TIMEOUT})=2 and {$INT.TIER.CRITICAL}=1'
+      name: 'INT: Critical server is unreachable'
+      priority: DISASTER
+      description: 'Only for tier=critical hosts ({$INT.TIER.CRITICAL}=1). Fires together with the official HIGH "Active checks are not available".'
+      tags:
+        - tag: scope
+          value: availability
+    - uuid: 2baa7954975c43108044a258df40123d
+      expression: 'last(/INT MON-SRV Windows/int.win.updates.reboot)=1 and last(/INT MON-SRV Windows/int.win.updates.lastpatch)>{$INT.REBOOT.PENDING.MAX.AGE}'
+      name: 'INT: Reboot pending for more than {$INT.REBOOT.PENDING.MAX.AGE} days'
+      opdata: 'Last update installed {ITEM.LASTVALUE2} days ago'
+      priority: WARNING
+      description: 'Installed updates are not active until reboot.'
+      tags:
+        - tag: scope
+          value: security
+    - uuid: a540f79fb06f49a3b9f683bac973aa79
+      expression: 'last(/INT MON-SRV Windows/int.win.updates.security)>0 and last(/INT MON-SRV Windows/int.win.updates.security.oldest)>{$INT.UPDATES.SEC.MAX.AGE}'
+      name: 'INT: Security updates pending for more than {$INT.UPDATES.SEC.MAX.AGE} days'
+      opdata: 'Pending: {ITEM.LASTVALUE1}, oldest {ITEM.LASTVALUE2} days'
+      priority: WARNING
+      tags:
+        - tag: scope
+          value: security
