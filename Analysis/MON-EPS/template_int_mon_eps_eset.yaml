@@ -211,7 +211,7 @@ zabbix_export:
 
             try {
                 if (!p.username || p.username.indexOf('{$') === 0 || !p.password) {
-                    throw 'Set {$INT.ESET.USER} and {$INT.ESET.PASSWORD}.';
+                    throw 'Set {\$INT.ESET.USER} and {\$INT.ESET.PASSWORD}.';
                 }
                 var token = call('POST', 'https://' + region + '.business-account.iam.eset.systems/oauth/token',
                     'grant_type=password&username=' + encodeURIComponent(p.username) + '&password=' + encodeURIComponent(p.password),

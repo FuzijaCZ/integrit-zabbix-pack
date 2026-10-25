@@ -130,7 +130,7 @@ zabbix_export:
             try {
                 var steps = JSON.parse(p.steps);
                 if (!Array.isArray(steps) || steps.length === 0) {
-                    throw 'Macro {$INT.WEBFUNC.STEPS} must be a JSON array of steps.';
+                    throw 'Macro {\$INT.WEBFUNC.STEPS} must be a JSON array of steps.';
                 }
                 current = 'start browser';
                 browser = new Browser(Browser.chromeOptions());
@@ -251,7 +251,7 @@ zabbix_export:
             var out = {count: 0, last_subject: '', error: ''};
             try {
                 if (!p.mailbox || p.mailbox.indexOf('{$') === 0) {
-                    throw 'Set {$INT.WEBFUNC.MAIL.MAILBOX}.';
+                    throw 'Set {\$INT.WEBFUNC.MAIL.MAILBOX}.';
                 }
                 var req = new HttpRequest();
                 req.addHeader('Content-Type: application/x-www-form-urlencoded');

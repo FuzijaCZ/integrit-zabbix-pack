@@ -567,7 +567,7 @@ zabbix_export:
             - uuid: 27feb1cd9d3d4ec2aabc991901ad2aae
               name: 'Service {#SERVICE}: state'
               type: ZABBIX_ACTIVE
-              key: 'service.info[{#SERVICE}]'
+              key: 'service.info[{#SERVICE},]'
               delay: 1m
               valuemap:
                 name: 'INT ROLE DHCP service state'
@@ -576,7 +576,7 @@ zabbix_export:
                   value: service
           trigger_prototypes:
             - uuid: 69f26c2e606d4ce0b14326b4ff6615ce
-              expression: 'min(/INT MON-ROLE DHCP server/service.info[{#SERVICE}],#3)<>0'
+              expression: 'min(/INT MON-ROLE DHCP server/service.info[{#SERVICE},],#3)<>0'
               name: 'INT: DHCP service {#SERVICE} is not running on {HOST.NAME}'
               opdata: '{ITEM.LASTVALUE1}'
               priority: HIGH
@@ -809,7 +809,7 @@ zabbix_export:
             - uuid: 050afaef0102490bb9c2b11fe34a583a
               name: 'Service {#SERVICE}: state'
               type: ZABBIX_ACTIVE
-              key: 'service.info[{#SERVICE}]'
+              key: 'service.info["{#SERVICE}",]'
               delay: 1m
               valuemap:
                 name: 'INT ROLE DNS service state'
@@ -818,7 +818,7 @@ zabbix_export:
                   value: service
           trigger_prototypes:
             - uuid: aacc688ae5904b72a76dfaa21d080cbc
-              expression: 'min(/INT MON-ROLE DNS server/service.info[{#SERVICE}],#3)<>0'
+              expression: 'min(/INT MON-ROLE DNS server/service.info["{#SERVICE}",],#3)<>0'
               name: 'INT: DNS service {#SERVICE} is not running on {HOST.NAME}'
               opdata: '{ITEM.LASTVALUE1}'
               priority: HIGH
@@ -1007,7 +1007,7 @@ zabbix_export:
             - uuid: f4b6166446f34e9687ba155f9a2136f9
               name: 'Service {#SERVICE}: state'
               type: ZABBIX_ACTIVE
-              key: 'service.info[{#SERVICE}]'
+              key: 'service.info[{#SERVICE},""]'
               delay: 1m
               valuemap:
                 name: 'INT ROLE PRINT service state'
@@ -1016,7 +1016,7 @@ zabbix_export:
                   value: service
           trigger_prototypes:
             - uuid: 0e7854b0c8f34dfb936170a4947b5b58
-              expression: 'min(/INT MON-ROLE Print server/service.info[{#SERVICE}],#3)<>0'
+              expression: 'min(/INT MON-ROLE Print server/service.info[{#SERVICE},""],#3)<>0'
               name: 'INT: Print service {#SERVICE} is not running on {HOST.NAME}'
               opdata: '{ITEM.LASTVALUE1}'
               priority: HIGH
@@ -1196,7 +1196,7 @@ zabbix_export:
             - uuid: 193f409ef2ca4dcbb5d6c09b4b016086
               name: 'Service {#SERVICE}: state'
               type: ZABBIX_ACTIVE
-              key: 'service.info[{#SERVICE}]'
+              key: 'service.info[{#SERVICE},"state"]'
               delay: 1m
               valuemap:
                 name: 'INT ROLE RDS service state'
@@ -1205,7 +1205,7 @@ zabbix_export:
                   value: service
           trigger_prototypes:
             - uuid: 2ef32943016e4723bae5897aab36666e
-              expression: 'min(/INT MON-ROLE RDS/service.info[{#SERVICE}],#3)<>0'
+              expression: 'min(/INT MON-ROLE RDS/service.info[{#SERVICE},"state"],#3)<>0'
               name: 'INT: RDS service {#SERVICE} is not running on {HOST.NAME}'
               opdata: '{ITEM.LASTVALUE1}'
               priority: HIGH
@@ -1351,7 +1351,7 @@ zabbix_export:
             - uuid: 9b54dc1604484b058c6766f8daeb7d28
               name: 'Service {#SERVICE}: state'
               type: ZABBIX_ACTIVE
-              key: 'service.info[{#SERVICE}]'
+              key: 'service.info["{#SERVICE}","state"]'
               delay: 1m
               valuemap:
                 name: 'INT ROLE IIS service state'
@@ -1360,7 +1360,7 @@ zabbix_export:
                   value: service
           trigger_prototypes:
             - uuid: ffd469ac0db34873b04d7e03a3e0e87a
-              expression: 'min(/INT MON-ROLE IIS/service.info[{#SERVICE}],#3)<>0'
+              expression: 'min(/INT MON-ROLE IIS/service.info["{#SERVICE}","state"],#3)<>0'
               name: 'INT: IIS service {#SERVICE} is not running on {HOST.NAME}'
               opdata: '{ITEM.LASTVALUE1}'
               priority: HIGH

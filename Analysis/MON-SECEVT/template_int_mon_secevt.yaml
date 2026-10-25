@@ -64,7 +64,7 @@ zabbix_export:
           name: 'Security events raw'
           type: ZABBIX_ACTIVE
           key: 'int.secevt.linux["{$INT.SECEVT.WINDOW}","{$INT.SECEVT.SUDO.USERS}","{$INT.SECEVT.SSH.ALLOW}"]'
-          delay: '{$INT.SECEVT.WINDOW}m'
+          delay: '{$INT.SECEVT.INTERVAL}'
           history: '0'
           value_type: TEXT
           trends: '0'
@@ -222,6 +222,9 @@ zabbix_export:
           value: '100'
         - macro: '{$INT.SECEVT.FAILED.WARN}'
           value: '20'
+        - macro: '{$INT.SECEVT.INTERVAL}'
+          value: 5m
+          description: 'Collection interval of the raw security item. Keep equal to {$INT.SECEVT.WINDOW} minutes.'
         - macro: '{$INT.SECEVT.NODATA}'
           value: 30m
         - macro: '{$INT.SECEVT.SSH.ALLOW}'
@@ -488,7 +491,7 @@ zabbix_export:
           name: 'Security: Failed logons raw'
           type: ZABBIX_ACTIVE
           key: 'int.secevt.failed[{$INT.SECEVT.WINDOW}]'
-          delay: '{$INT.SECEVT.WINDOW}m'
+          delay: '{$INT.SECEVT.INTERVAL}'
           history: '0'
           value_type: TEXT
           trends: '0'
@@ -584,6 +587,9 @@ zabbix_export:
         - macro: '{$INT.SECEVT.GROUP.MATCHES}'
           value: '(Administrators|Administrátoři|Remote Desktop Users|Uživatelé vzdálené plochy|Backup Operators|Operátoři zálohování|Domain Admins|Enterprise Admins|Schema Admins|Hyper-V Administrators|Správci technologie Hyper-V)'
           description: 'Regex on the event text (group name, English and Czech Windows).'
+        - macro: '{$INT.SECEVT.INTERVAL}'
+          value: 5m
+          description: 'Collection interval of the raw security item. Keep equal to {$INT.SECEVT.WINDOW} minutes.'
         - macro: '{$INT.SECEVT.NODATA}'
           value: 30m
         - macro: '{$INT.SECEVT.RDP.PUBLIC.REGEX}'
@@ -597,4 +603,4 @@ zabbix_export:
           description: 'Regex the 4698 text must match: negative look-ahead list of regular tasks that do NOT alert.'
         - macro: '{$INT.SECEVT.WINDOW}'
           value: '5'
-          description: 'Minutes counted for failed logons (= collection interval).'
+          description: 'Minutes counted for failed logons. Keep equal to {$INT.SECEVT.INTERVAL}.'
