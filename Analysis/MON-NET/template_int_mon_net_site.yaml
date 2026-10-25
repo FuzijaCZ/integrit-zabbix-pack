@@ -1,0 +1,404 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 20f5bbc4f701485889c80e2fa50d4e68
+      name: Templates/Integrit/MON-NET
+  templates:
+    - uuid: 6b477d821da64baf85ed9fbd0f6eacc2
+      template: 'INT MON-NET WAN'
+      name: 'INT MON-NET WAN'
+      description: |
+        Integrit MON-NET vendor-neutral WAN view from INSIDE the site (host <CUST>-<SITE>-WAN, monitored by the site proxy).
+        Per WAN link: ping to the provider gateway ({$INT.WAN.LINKS}). Site: ping to 3 internet targets,
+        public IP seen from inside (failover detection against {$INT.WAN.PRIMARY.IP.MATCHES}),
+        site-to-site VPN tunnels by ping through the tunnel ({$INT.VPN.TUNNELS}).
+        Host interface: type Agent, IP of the primary provider gateway (no agent needed, only a ping target).
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-NET
+      items:
+        - uuid: 5b37aeb5b82c4b8ebb2e6f5eede27a74
+          name: 'Internet target 1 ping'
+          type: SIMPLE
+          key: 'icmpping[{$INT.WAN.TARGET1},3]'
+          tags:
+            - tag: component
+              value: internet
+        - uuid: 233d0008100f4a29adcd3a6452161583
+          name: 'Internet target 2 ping'
+          type: SIMPLE
+          key: 'icmpping[{$INT.WAN.TARGET2},3]'
+          tags:
+            - tag: component
+              value: internet
+        - uuid: 9f77be6bfdc94c7b9e50d4c5317baf04
+          name: 'Internet target 3 ping'
+          type: SIMPLE
+          key: 'icmpping[{$INT.WAN.TARGET3},3]'
+          tags:
+            - tag: component
+              value: internet
+        - uuid: a1f1655c163049b4aea0fd7b827d732e
+          name: 'Internet target 1 loss'
+          type: SIMPLE
+          key: 'icmppingloss[{$INT.WAN.TARGET1},10]'
+          value_type: FLOAT
+          units: '%'
+          tags:
+            - tag: component
+              value: internet
+        - uuid: e48bce3254d74bdc87d320db50b3690c
+          name: 'Internet target 1 response time'
+          type: SIMPLE
+          key: 'icmppingsec[{$INT.WAN.TARGET1},10]'
+          value_type: FLOAT
+          units: s
+          tags:
+            - tag: component
+              value: internet
+          triggers:
+            - uuid: 4e723a579eee4875ad40e43157b80b87
+              expression: 'avg(/INT MON-NET WAN/icmppingsec[{$INT.WAN.TARGET1},10],15m)>{$INT.WAN.LATENCY.FACTOR}*avg(/INT MON-NET WAN/icmppingsec[{$INT.WAN.TARGET1},10],7d) and avg(/INT MON-NET WAN/icmppingsec[{$INT.WAN.TARGET1},10],15m)>{$INT.WAN.LATENCY.MIN}'
+              name: 'INT: Internet latency is more than {$INT.WAN.LATENCY.FACTOR}x the 7-day baseline'
+              opdata: 'Now: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Average response time to {$INT.WAN.TARGET1} over 15 min is above {$INT.WAN.LATENCY.FACTOR} times its 7-day average (and above {$INT.WAN.LATENCY.MIN}).'
+              tags:
+                - tag: scope
+                  value: performance
+        - uuid: 7cc033abc6874265a8b15f8fc03dfbfa
+          name: 'Public IP seen from inside'
+          type: HTTP_AGENT
+          key: int.wan.public.ip
+          delay: 5m
+          history: 31d
+          value_type: CHAR
+          trends: '0'
+          timeout: 10s
+          url: '{$INT.WAN.IP.ECHO.URL}'
+          description: 'Public source IP of the site as seen by an internet service. Changes when the site fails over to the backup link.'
+          preprocessing:
+            - type: TRIM
+              parameters:
+                - ' '
+            - type: REGEX
+              parameters:
+                - '^(\d{1,3}(\.\d{1,3}){3})$'
+                - \1
+          tags:
+            - tag: component
+              value: wan
+          triggers:
+            - uuid: 7d203c221cdb4e06af1708c7a0e9b35b
+              expression: 'find(/INT MON-NET WAN/int.wan.public.ip,,"regexp","{$INT.WAN.PRIMARY.IP.MATCHES}")=0 and length(last(/INT MON-NET WAN/int.wan.public.ip))>0'
+              name: 'INT: Site is running on the backup WAN link'
+              opdata: 'Public IP: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'Public IP does not match the primary link ({$INT.WAN.PRIMARY.IP.MATCHES}). Resolves when traffic returns to the primary link. Duration goes to the monthly report.'
+              tags:
+                - tag: scope
+                  value: availability
+      discovery_rules:
+        - uuid: 92f51a92f2b445e89323505ec747fb84
+          name: 'INT: WAN links discovery'
+          type: SCRIPT
+          key: int.wan.links.discovery
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), out = [];
+            String(p.list).split(';').forEach(function (e) {
+                var a = e.split(':');
+                if (a.length === 2 && a[0].trim() && a[1].trim()) {
+                    out.push({'{#LINK}': a[0].trim(), '{#GW}': a[1].trim()});
+                }
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: list
+              value: '{$INT.WAN.LINKS}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'From {$INT.WAN.LINKS} = "NAME:provider-gateway-IP;NAME:IP". Pinging the provider gateway tests each link on its own interface.'
+          item_prototypes:
+            - uuid: ce74b3b1dcc445a1af4a7f84d9b91fad
+              name: 'WAN [{#LINK}]: Provider gateway loss'
+              type: SIMPLE
+              key: 'icmppingloss[{#GW},10]'
+              value_type: FLOAT
+              units: '%'
+              tags:
+                - tag: component
+                  value: wan
+                - tag: link
+                  value: '{#LINK}'
+              trigger_prototypes:
+                - uuid: 36de358777c24d0e8616c22b59035a6d
+                  expression: 'min(/INT MON-NET WAN/icmppingloss[{#GW},10],10m)>{$INT.WAN.LOSS.MAX:"{#LINK}"}'
+                  name: 'INT: WAN [{#LINK}]: packet loss above {$INT.WAN.LOSS.MAX:"{#LINK}"}% for 10 min'
+                  opdata: 'Loss: {ITEM.LASTVALUE1}'
+                  priority: AVERAGE
+                  dependencies:
+                    - name: 'INT: WAN [{#LINK}] is down'
+                      expression: 'max(/INT MON-NET WAN/icmpping[{#GW},3],#3)=0'
+                  tags:
+                    - tag: scope
+                      value: performance
+            - uuid: 0c41a6d0817443829376bae70dfda0cb
+              name: 'WAN [{#LINK}]: Provider gateway ping'
+              type: SIMPLE
+              key: 'icmpping[{#GW},3]'
+              tags:
+                - tag: component
+                  value: wan
+                - tag: link
+                  value: '{#LINK}'
+              trigger_prototypes:
+                - uuid: 4ae895e7f3e54fc6a9110dae6622c174
+                  expression: 'max(/INT MON-NET WAN/icmpping[{#GW},3],#3)=0'
+                  name: 'INT: WAN [{#LINK}] is down'
+                  priority: HIGH
+                  description: 'Provider gateway {#GW} does not answer 3 checks in a row. Report it to the provider (draft 4.6).'
+                  tags:
+                    - tag: scope
+                      value: availability
+            - uuid: a210d67159b546fda17ceea4b7ae901d
+              name: 'WAN [{#LINK}]: Provider gateway response time'
+              type: SIMPLE
+              key: 'icmppingsec[{#GW},10]'
+              value_type: FLOAT
+              units: s
+              tags:
+                - tag: component
+                  value: wan
+                - tag: link
+                  value: '{#LINK}'
+        - uuid: cd487e3d7ee347f486843342d03bd6a4
+          name: 'INT: VPN tunnels discovery'
+          type: SCRIPT
+          key: int.vpn.tunnels.discovery
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), out = [];
+            String(p.list).split(';').forEach(function (e) {
+                var a = e.split(':');
+                if (a.length === 2 && a[0].trim() && a[1].trim()) {
+                    out.push({'{#VPN}': a[0].trim(), '{#VPN.IP}': a[1].trim()});
+                }
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: list
+              value: '{$INT.VPN.TUNNELS}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'From {$INT.VPN.TUNNELS} = "NAME:IP-behind-tunnel;...". Pings a host on the far side through the tunnel (vendor independent).'
+          item_prototypes:
+            - uuid: 457432531e7d47aabff1da76cf85d863
+              name: 'VPN [{#VPN}]: Ping through tunnel'
+              type: SIMPLE
+              key: 'icmpping[{#VPN.IP},3]'
+              tags:
+                - tag: component
+                  value: vpn
+                - tag: vpn
+                  value: '{#VPN}'
+              trigger_prototypes:
+                - uuid: 1a0245991e18493193ab96f55b97702b
+                  expression: 'max(/INT MON-NET WAN/icmpping[{#VPN.IP},3],#3)=0'
+                  name: 'INT: VPN tunnel [{#VPN}] is down'
+                  priority: HIGH
+                  description: 'Host {#VPN.IP} behind the site-to-site tunnel does not answer 3 checks in a row.'
+                  dependencies:
+                    - name: 'INT: Internet is unreachable from the site'
+                      expression: 'max(/INT MON-NET WAN/icmpping[{$INT.WAN.TARGET1},3],#3)=0 and max(/INT MON-NET WAN/icmpping[{$INT.WAN.TARGET2},3],#3)=0 and max(/INT MON-NET WAN/icmpping[{$INT.WAN.TARGET3},3],#3)=0'
+                  tags:
+                    - tag: scope
+                      value: availability
+      tags:
+        - tag: service
+          value: MON-NET
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.VPN.TUNNELS}'
+          description: 'Site-to-site tunnels, "NAME:IP;NAME:IP" with an always-on host behind each tunnel, e.g. "BRNO:10.20.0.1;AZURE:10.50.0.4". Empty = none.'
+        - macro: '{$INT.WAN.IP.ECHO.URL}'
+          value: 'https://api.ipify.org'
+          description: 'Returns the caller public IPv4 as plain text.'
+        - macro: '{$INT.WAN.LATENCY.FACTOR}'
+          value: '3'
+        - macro: '{$INT.WAN.LATENCY.MIN}'
+          value: '0.05'
+          description: 'Latency (s) below which the baseline trigger never fires (avoids alerts on 2 ms vs 7 ms).'
+        - macro: '{$INT.WAN.LINKS}'
+          description: 'WAN links, "NAME:provider-gateway-IP;NAME:IP", e.g. "O2-FIBER:82.100.1.1;T-LTE:10.64.64.64". Empty = none.'
+        - macro: '{$INT.WAN.LOSS.MAX}'
+          value: '5'
+          description: 'Packet loss % for AVERAGE. Context per link name.'
+        - macro: '{$INT.WAN.PRIMARY.IP.MATCHES}'
+          value: '.*'
+          description: 'Regex of public IP(s) of the primary link, e.g. ^82\.100\.1\.10$. Default .* = failover detection off.'
+        - macro: '{$INT.WAN.TARGET1}'
+          value: 1.1.1.1
+        - macro: '{$INT.WAN.TARGET2}'
+          value: 8.8.8.8
+        - macro: '{$INT.WAN.TARGET3}'
+          value: 9.9.9.9
+    - uuid: aa77a5c12b2f46969ceb69469e8ab9ce
+      template: 'INT MON-NET External'
+      name: 'INT MON-NET External'
+      description: |
+        Integrit MON-NET view from OUTSIDE (host <CUST>-<SITE>-EXT, monitored by the external proxy group).
+        Pings the primary public IP (host interface, type Agent) and optionally the backup link public IP.
+        DISASTER when all checked public IPs are down = site unreachable (WAN or power, draft 3.2.4).
+        The customer firewall must answer ICMP echo from the Integrit external proxy IPs.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-NET
+      items:
+        - uuid: 5909afc6fbda46dfa9828bad2734595f
+          name: 'Backup WAN public IP ping'
+          type: SIMPLE
+          key: 'icmpping[{$INT.WAN.BACKUP.PUBLIC.IP},3]'
+          description: 'With empty {$INT.WAN.BACKUP.PUBLIC.IP} this pings the host interface again (same as primary).'
+          tags:
+            - tag: component
+              value: wan
+        - uuid: 4afaa28ed0fe4b6ca1647db5d400304e
+          name: 'Primary WAN public IP loss'
+          type: SIMPLE
+          key: 'icmppingloss[,10]'
+          value_type: FLOAT
+          units: '%'
+          tags:
+            - tag: component
+              value: wan
+        - uuid: 572da4c108d444c19e2dfd999f57de29
+          name: 'Primary WAN public IP ping'
+          type: SIMPLE
+          key: 'icmpping[,3]'
+          tags:
+            - tag: component
+              value: wan
+        - uuid: 9cfdb16e643d42b1b3939f1ee1adf73d
+          name: 'Primary WAN public IP response time'
+          type: SIMPLE
+          key: 'icmppingsec[,10]'
+          value_type: FLOAT
+          units: s
+          tags:
+            - tag: component
+              value: wan
+      tags:
+        - tag: service
+          value: MON-NET
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.WAN.BACKUP.CHECK}'
+          value: '0'
+          description: 'Set 1 when {$INT.WAN.BACKUP.PUBLIC.IP} is filled.'
+        - macro: '{$INT.WAN.BACKUP.PUBLIC.IP}'
+          description: 'Public IP of the backup link (only if it accepts inbound ICMP; LTE CGNAT usually does not).'
+        - macro: '{$INT.WAN.LOSS.MAX}'
+          value: '5'
+    - uuid: c526f2a07045471499e3a3b05dfa121c
+      template: 'INT MON-NET Site proxy'
+      name: 'INT MON-NET Site proxy'
+      description: |
+        Integrit platform check of a customer site proxy, evaluated by the Zabbix SERVER (host named exactly like the proxy,
+        e.g. PXY-ACME-PRG, group Integrit/Platform, monitored by server, no interface needed).
+        HIGH when the proxy has not contacted the server for {$INT.PROXY.LASTSEEN.MAX}. Alerts go to Integrit.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-NET
+      items:
+        - uuid: 60560944eb7546989886e839e8d29c94
+          name: 'Proxy last seen'
+          type: INTERNAL
+          key: 'zabbix[proxy,{HOST.HOST},lastaccess]'
+          units: unixtime
+          description: 'Time the proxy {HOST.HOST} last contacted the server.'
+          tags:
+            - tag: component
+              value: proxy
+          triggers:
+            - uuid: cabe43385f954a11ac9d7995862c15d4
+              expression: 'fuzzytime(/INT MON-NET Site proxy/zabbix[proxy,{HOST.HOST},lastaccess],{$INT.PROXY.LASTSEEN.MAX})=0'
+              name: 'INT: Monitoring proxy {HOST.HOST} not seen for {$INT.PROXY.LASTSEEN.MAX}'
+              priority: HIGH
+              description: 'All monitoring of this site is blind. If the site EXT host also shows "Site unreachable", it is a site outage; otherwise the proxy VM/appliance is down (Integrit internal).'
+              tags:
+                - tag: scope
+                  value: availability
+      tags:
+        - tag: service
+          value: MON-NET
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.PROXY.LASTSEEN.MAX}'
+          value: 3m
+  triggers:
+    - uuid: d0c37c573f004243a7ec502fb5504843
+      expression: 'max(/INT MON-NET External/icmpping[,3],#3)=0 and (max(/INT MON-NET External/icmpping[{$INT.WAN.BACKUP.PUBLIC.IP},3],#3)=0 or {$INT.WAN.BACKUP.CHECK}=0)'
+      name: 'INT: Site is unreachable from the internet'
+      priority: DISASTER
+      description: 'All checked public IPs of the site fail from the Integrit external proxy: WAN outage or power loss at the site.'
+      tags:
+        - tag: scope
+          value: availability
+    - uuid: 80a0bc8392c64807990d15f56fa687bb
+      expression: 'max(/INT MON-NET External/icmpping[,3],#3)=0'
+      name: 'INT: Primary WAN public IP is unreachable from the internet'
+      priority: HIGH
+      dependencies:
+        - name: 'INT: Site is unreachable from the internet'
+          expression: 'max(/INT MON-NET External/icmpping[,3],#3)=0 and (max(/INT MON-NET External/icmpping[{$INT.WAN.BACKUP.PUBLIC.IP},3],#3)=0 or {$INT.WAN.BACKUP.CHECK}=0)'
+      tags:
+        - tag: scope
+          value: availability
+    - uuid: 847a2ab9c1e94f67b06e61716ef39938
+      expression: 'min(/INT MON-NET External/icmppingloss[,10],10m)>{$INT.WAN.LOSS.MAX}'
+      name: 'INT: Primary WAN packet loss from the internet above {$INT.WAN.LOSS.MAX}% for 10 min'
+      opdata: 'Loss: {ITEM.LASTVALUE1}'
+      priority: AVERAGE
+      dependencies:
+        - name: 'INT: Primary WAN public IP is unreachable from the internet'
+          expression: 'max(/INT MON-NET External/icmpping[,3],#3)=0'
+      tags:
+        - tag: scope
+          value: performance
+    - uuid: e71985f3849b421fb336b140557eb796
+      expression: 'max(/INT MON-NET WAN/icmpping[{$INT.WAN.TARGET1},3],#3)=0 and max(/INT MON-NET WAN/icmpping[{$INT.WAN.TARGET2},3],#3)=0 and max(/INT MON-NET WAN/icmpping[{$INT.WAN.TARGET3},3],#3)=0'
+      name: 'INT: Internet is unreachable from the site'
+      priority: HIGH
+      description: 'None of the 3 internet targets answers from the site proxy. Site proxy data is buffered and arrives after recovery.'
+      tags:
+        - tag: scope
+          value: availability
+    - uuid: 03c81637dfa34a2189ad495c245cd448
+      expression: 'min(/INT MON-NET WAN/icmppingloss[{$INT.WAN.TARGET1},10],10m)>{$INT.WAN.LOSS.MAX}'
+      name: 'INT: Internet packet loss above {$INT.WAN.LOSS.MAX}% for 10 min'
+      opdata: 'Loss: {ITEM.LASTVALUE1}'
+      priority: AVERAGE
+      dependencies:
+        - name: 'INT: Internet is unreachable from the site'
+          expression: 'max(/INT MON-NET WAN/icmpping[{$INT.WAN.TARGET1},3],#3)=0 and max(/INT MON-NET WAN/icmpping[{$INT.WAN.TARGET2},3],#3)=0 and max(/INT MON-NET WAN/icmpping[{$INT.WAN.TARGET3},3],#3)=0'
+      tags:
+        - tag: scope
+          value: performance
+    - uuid: 6496d065485046cb8b7017ed8ec4469c
+      expression: 'max(/INT MON-NET External/icmpping[{$INT.WAN.BACKUP.PUBLIC.IP},3],#3)=0 and {$INT.WAN.BACKUP.CHECK}=1'
+      name: 'INT: Backup WAN public IP is unreachable from the internet'
+      priority: HIGH
+      dependencies:
+        - name: 'INT: Site is unreachable from the internet'
+          expression: 'max(/INT MON-NET External/icmpping[,3],#3)=0 and (max(/INT MON-NET External/icmpping[{$INT.WAN.BACKUP.PUBLIC.IP},3],#3)=0 or {$INT.WAN.BACKUP.CHECK}=0)'
+      tags:
+        - tag: scope
+          value: availability
