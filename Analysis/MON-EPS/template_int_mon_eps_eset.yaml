@@ -1,0 +1,374 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: c30de4a7fde2401fb75128c61e3b1aec
+      name: Templates/Integrit/MON-EPS
+  templates:
+    - uuid: 9181027dc7764cc89f93a0cf07d61134
+      template: 'INT MON-EPS ESET PROTECT Cloud'
+      name: 'INT MON-EPS ESET PROTECT Cloud'
+      description: |
+        Integrit MON-EPS template for ESET PROTECT Cloud (ESET Connect public API, external proxy). No official Zabbix template exists.
+        Aggregated per tenant (draft 4.13): device counts, devices not connected for {$INT.ESET.STALE.DAYS} days, unresolved detections.
+        Device-level problems only for unresolved high-severity detections (LLD limited to affected devices).
+        One host per customer ESET PROTECT tenant. Not monitoring, not a SOC: detections are reported, not investigated.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-EPS
+      items:
+        - uuid: a722c272da5942f5b6535c2a79d64c48
+          name: 'ESET: API error'
+          type: DEPENDENT
+          key: int.eset.error
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Empty = OK.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.error
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.eset.get
+          tags:
+            - tag: component
+              value: eps
+          triggers:
+            - uuid: 02cd558b9f4f493f9d4a1ee986487c85
+              expression: 'length(last(/INT MON-EPS ESET PROTECT Cloud/int.eset.error))>0'
+              name: 'INT: ESET Connect API error'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Login or API call failed: API user disabled / password changed / missing Integrations permission, or wrong region. Endpoint data is unknown meanwhile.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 457ac4d518a94a48852b2c7aba1fa209
+          name: 'ESET: Detections in last 24 h'
+          type: DEPENDENT
+          key: int.eset.detections.24h
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.detections_last24h
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.eset.get
+          tags:
+            - tag: component
+              value: eps
+          triggers:
+            - uuid: 8d651951969b4adba016de986749964a
+              expression: 'last(/INT MON-EPS ESET PROTECT Cloud/int.eset.detections.24h)>0'
+              name: 'INT: ESET reported {ITEM.LASTVALUE1} detections in the last 24 h'
+              priority: INFO
+              description: 'Report value. Unresolved high-severity detections raise HIGH per device.'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: f07e03a5a5474ff38af718fe6a939eae
+          name: 'ESET: Unresolved high-severity detections'
+          type: DEPENDENT
+          key: int.eset.detections.high
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.detections_high_unresolved
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.eset.get
+          tags:
+            - tag: component
+              value: eps
+        - uuid: a0b7bf54da65471bbb5e04bdd8a2856c
+          name: 'ESET: Unresolved detections'
+          type: DEPENDENT
+          key: int.eset.detections.unresolved
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.detections_unresolved
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.eset.get
+          tags:
+            - tag: component
+              value: eps
+        - uuid: a092fa8bdd8e4803b545176913c341e5
+          name: 'ESET: Devices'
+          type: DEPENDENT
+          key: int.eset.devices.total
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.devices_total
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.eset.get
+          tags:
+            - tag: component
+              value: eps
+        - uuid: 30ab9fd688044f65a1f4be400e5aeda4
+          name: 'ESET: Devices not connected'
+          type: DEPENDENT
+          key: int.eset.devices.stale
+          delay: '0'
+          description: 'Devices without sync for {$INT.ESET.STALE.DAYS} days.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.devices_stale
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.eset.get
+          tags:
+            - tag: component
+              value: eps
+        - uuid: 1b5d892b322a4798943aa509dafe13dd
+          name: 'ESET: Devices not connected, list'
+          type: DEPENDENT
+          key: int.eset.devices.stale.list
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'First 50 names (report).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.stale_list
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.eset.get
+          tags:
+            - tag: component
+              value: eps
+        - uuid: 50956f1c7b704c56bf928b3b4a488527
+          name: 'ESET: Devices not connected, in %'
+          type: DEPENDENT
+          key: int.eset.devices.stale.pct
+          delay: '0'
+          value_type: FLOAT
+          units: '%'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.stale_pct
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.eset.get
+          tags:
+            - tag: component
+              value: eps
+        - uuid: bed1c606c90f411aba554a85ccb9e84e
+          name: 'ESET: Get data'
+          type: SCRIPT
+          key: int.eset.get
+          delay: 15m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          params: |
+            var p = JSON.parse(value);
+            var region = String(p.region || 'eu').toLowerCase();
+            var out = {error: ''};
+
+            function call(method, url, body, headers) {
+                var req = new HttpRequest();
+                if (p.http_proxy) {
+                    req.setProxy(p.http_proxy);
+                }
+                (headers || []).forEach(function (h) { req.addHeader(h); });
+                var resp = method === 'POST' ? req.post(url, body) : req.get(url);
+                var st = req.getStatus();
+                if (st < 200 || st >= 300) {
+                    throw 'HTTP ' + st + ' ' + url.replace(/\?.*$/, '') + ': ' + String(resp).substring(0, 200);
+                }
+                return JSON.parse(resp);
+            }
+
+            function listAll(base, field, token) {
+                var items = [], pageToken = '', guard = 0;
+                do {
+                    var url = base + (base.indexOf('?') === -1 ? '?' : '&') + 'pageSize=1000' + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : '');
+                    var page = call('GET', url, null, ['Authorization: Bearer ' + token, 'Accept: application/json']);
+                    items = items.concat(page[field] || []);
+                    pageToken = page.nextPageToken || '';
+                    guard++;
+                } while (pageToken && guard < 50);
+                return items;
+            }
+
+            function ts(s) {
+                return s ? Date.parse(String(s).replace(/\.\d+/, '')) : 0;
+            }
+
+            try {
+                if (!p.username || p.username.indexOf('{$') === 0 || !p.password) {
+                    throw 'Set {$INT.ESET.USER} and {$INT.ESET.PASSWORD}.';
+                }
+                var token = call('POST', 'https://' + region + '.business-account.iam.eset.systems/oauth/token',
+                    'grant_type=password&username=' + encodeURIComponent(p.username) + '&password=' + encodeURIComponent(p.password),
+                    ['Content-Type: application/x-www-form-urlencoded']).access_token;
+
+                var now = Date.now();
+                var staleLimit = now - parseInt(p.stale_days, 10) * 86400000;
+
+                var devices = listAll('https://' + region + '.device-management.eset.systems/v1/devices', 'devices', token);
+                var names = {};
+                out.devices_total = devices.length;
+                out.devices_stale = 0;
+                out.stale_list = [];
+                devices.forEach(function (d) {
+                    names[d.uuid] = d.displayName || d.uuid;
+                    var last = ts(d.lastSyncTime);
+                    if (last && last < staleLimit) {
+                        out.devices_stale++;
+                        if (out.stale_list.length < 50) {
+                            out.stale_list.push(d.displayName || d.uuid);
+                        }
+                    }
+                });
+
+                var detections = listAll('https://' + region + '.incident-management.eset.systems/v1/detections', 'detections', token);
+                var high = /HIGH|CRITICAL|SEVERITY_LEVEL_(HIGH|VERY_HIGH)/i;
+                var minAge = parseInt(p.detection_min_age, 10) * 1000;
+                out.detections_unresolved = 0;
+                out.detections_high_unresolved = 0;
+                out.detections_last24h = 0;
+                out.high_devices = [];
+                var seen = {};
+                detections.forEach(function (x) {
+                    var occur = ts(x.occurTime);
+                    if (occur > now - 86400000) {
+                        out.detections_last24h++;
+                    }
+                    if (x.resolved === true) {
+                        return;
+                    }
+                    out.detections_unresolved++;
+                    if (high.test(String(x.severityLevel || x.severity || '')) && occur && occur < now - minAge) {
+                        out.detections_high_unresolved++;
+                        var dev = x.deviceUuid || (x.device && x.device.uuid) || '';
+                        if (dev && !seen[dev]) {
+                            seen[dev] = true;
+                            out.high_devices.push({uuid: dev, name: names[dev] || (x.device && x.device.displayName) || dev,
+                                threat: x.displayName || x.typeName || x.category || ''});
+                        }
+                    }
+                });
+                out.stale_pct = out.devices_total > 0 ? Math.round(out.devices_stale / out.devices_total * 1000) / 10 : 0;
+                out.stale_list = out.stale_list.join(', ');
+            }
+            catch (e) {
+                out.error = String(e);
+            }
+            return JSON.stringify(out);
+          description: 'ESET Connect API: device-management /v1/devices and incident-management /v1/detections, aggregated per tenant.'
+          timeout: 120s
+          parameters:
+            - name: detection_min_age
+              value: '{$INT.ESET.DETECTION.MIN.AGE}'
+            - name: http_proxy
+              value: '{$INT.ESET.HTTP.PROXY}'
+            - name: password
+              value: '{$INT.ESET.PASSWORD}'
+            - name: region
+              value: '{$INT.ESET.REGION}'
+            - name: stale_days
+              value: '{$INT.ESET.STALE.DAYS}'
+            - name: username
+              value: '{$INT.ESET.USER}'
+          tags:
+            - tag: component
+              value: raw
+      discovery_rules:
+        - uuid: 5f057691ebe9410b825ec1d94c37c98b
+          name: 'ESET: Devices with unresolved high-severity detections'
+          type: DEPENDENT
+          key: int.eset.threat.discovery
+          delay: '0'
+          lifetime: 1d
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: 2b15b8d8e66f4c0680b779c8eb029d01
+              name: 'ESET device {#DEVICE}: Unresolved high-severity threat'
+              type: DEPENDENT
+              key: 'int.eset.threat["{#UUID}"]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.high_devices[?(@.uuid=="{#UUID}")].threat.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: ''
+              master_item:
+                key: int.eset.get
+              tags:
+                - tag: component
+                  value: eps
+                - tag: device
+                  value: '{#DEVICE}'
+              trigger_prototypes:
+                - uuid: feca22d6247b413e9db6731a32c08ea1
+                  expression: 'length(last(/INT MON-EPS ESET PROTECT Cloud/int.eset.threat["{#UUID}"]))>0'
+                  name: 'INT: ESET unresolved high-severity detection on {#DEVICE}'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'Unresolved for more than {$INT.ESET.DETECTION.MIN.AGE} s. Check the device in ESET PROTECT → Detections; resolves when the detection is marked resolved.'
+                  tags:
+                    - tag: scope
+                      value: security
+          master_item:
+            key: int.eset.get
+          lld_macro_paths:
+            - lld_macro: '{#DEVICE}'
+              path: $.name
+            - lld_macro: '{#UUID}'
+              path: $.uuid
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.high_devices
+              error_handler: DISCARD_VALUE
+      tags:
+        - tag: service
+          value: MON-EPS
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.ESET.DETECTION.MIN.AGE}'
+          value: '1800'
+          description: 'Seconds a high-severity detection must stay unresolved before HIGH (draft: 30 min).'
+        - macro: '{$INT.ESET.HTTP.PROXY}'
+        - macro: '{$INT.ESET.PASSWORD}'
+          type: SECRET_TEXT
+        - macro: '{$INT.ESET.REGION}'
+          value: eu
+          description: 'ESET PROTECT Cloud data centre: eu, de, us, ca, jpn.'
+        - macro: '{$INT.ESET.STALE.DAYS}'
+          value: '7'
+        - macro: '{$INT.ESET.STALE.MAX.COUNT}'
+          value: '5'
+        - macro: '{$INT.ESET.STALE.MAX.PCT}'
+          value: '10'
+        - macro: '{$INT.ESET.USER}'
+          description: 'ESET PROTECT Hub / Business Account API user (e-mail) with read-only Integrations permission.'
+  triggers:
+    - uuid: 9bd91da622ad49b98c3395208e88df34
+      expression: 'last(/INT MON-EPS ESET PROTECT Cloud/int.eset.devices.stale)>{$INT.ESET.STALE.MAX.COUNT} or (last(/INT MON-EPS ESET PROTECT Cloud/int.eset.devices.stale.pct)>{$INT.ESET.STALE.MAX.PCT} and last(/INT MON-EPS ESET PROTECT Cloud/int.eset.devices.stale)>0)'
+      name: 'INT: ESET has {ITEM.LASTVALUE1} devices not connected for {$INT.ESET.STALE.DAYS} days'
+      opdata: '{ITEM.LASTVALUE2} %'
+      priority: AVERAGE
+      description: 'Devices may be unprotected (agent removed, broken, or retired but not deleted from the console). List in item "Devices not connected, list".'
+      tags:
+        - tag: scope
+          value: security
