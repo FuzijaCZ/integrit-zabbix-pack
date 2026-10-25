@@ -1,0 +1,168 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: ac5f8c0017cc498ebef070ea511d8f95
+      name: Templates/Integrit/MON-BKP
+  templates:
+    - uuid: b2ea275f460b4da6ac544e770a6e209b
+      template: 'INT MON-BKP Veeam Agent for Windows'
+      name: 'INT MON-BKP Veeam Agent for Windows'
+      description: |
+        Integrit MON-BKP connector for a standalone Veeam Agent for Microsoft Windows (one backup job per machine),
+        read from the "Veeam Agent" event log by the Zabbix agent 2 (active). Link next to INT MON-SRV Windows.
+        Event 190 = job session finished ("... finished with Success/Warning/Failed").
+        Machines with several Veeam Agent jobs or Veeam B&R servers: use INT MON-BKP Veeam Backup and Replication instead.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-BKP
+      items:
+        - uuid: dfee9a4c5e3d4f26816ce4563b3dfc36
+          name: 'INT: Veeam Agent: Job finished events'
+          type: ZABBIX_ACTIVE
+          key: 'eventlog["Veeam Agent",,,,"^190$",,skip]'
+          delay: 1m
+          history: 90d
+          value_type: LOG
+          trends: '0'
+          tags:
+            - tag: component
+              value: jobs
+          triggers:
+            - uuid: 72e0862a301e4554af40af69ae6591df
+              expression: 'find(/INT MON-BKP Veeam Agent for Windows/eventlog["Veeam Agent",,,,"^190$",,skip],,"like","Failed")=1'
+              name: 'INT: Veeam Agent backup failed'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'Last finished session reported Failed. Resolves with the next session that is not Failed.'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: 352feb98f7264e86afefced0c21f0060
+              expression: 'find(/INT MON-BKP Veeam Agent for Windows/eventlog["Veeam Agent",,,,"^190$",,skip],,"like","Warning")=1'
+              name: 'INT: Veeam Agent backup ended with warning'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: WARNING
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: e35a9b72790141d9bd181d1b088b8bee
+          name: 'INT: Veeam Agent: Successful job events'
+          type: ZABBIX_ACTIVE
+          key: 'eventlog["Veeam Agent","Success",,,"^190$",,skip]'
+          delay: 1m
+          history: 90d
+          value_type: LOG
+          trends: '0'
+          tags:
+            - tag: component
+              value: jobs
+          triggers:
+            - uuid: 244bc32b809a498eb35ad3562f56f4c5
+              expression: 'nodata(/INT MON-BKP Veeam Agent for Windows/eventlog["Veeam Agent","Success",,,"^190$",,skip],{$INT.BKP.MAX.AGE.DISASTER})=1'
+              name: 'INT: Veeam Agent: no successful backup for more than {$INT.BKP.MAX.AGE.DISASTER}'
+              priority: DISASTER
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: 4365859b2a74473c9e244d3d7569e919
+              expression: 'nodata(/INT MON-BKP Veeam Agent for Windows/eventlog["Veeam Agent","Success",,,"^190$",,skip],{$INT.BKP.MAX.AGE})=1'
+              name: 'INT: Veeam Agent: no successful backup for more than {$INT.BKP.MAX.AGE}'
+              priority: HIGH
+              description: 'Also fires when the agent or the Veeam service does not run. Weekly schedule: set {$INT.BKP.MAX.AGE} on the host.'
+              dependencies:
+                - name: 'INT: Veeam Agent: no successful backup for more than {$INT.BKP.MAX.AGE.DISASTER}'
+                  expression: 'nodata(/INT MON-BKP Veeam Agent for Windows/eventlog["Veeam Agent","Success",,,"^190$",,skip],{$INT.BKP.MAX.AGE.DISASTER})=1'
+              tags:
+                - tag: scope
+                  value: availability
+      tags:
+        - tag: service
+          value: MON-BKP
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.BKP.MAX.AGE}'
+          value: 26h
+          description: 'Max time since last successful backup (HIGH).'
+        - macro: '{$INT.BKP.MAX.AGE.DISASTER}'
+          value: 52h
+          description: 'Max time since last successful backup (DISASTER).'
+    - uuid: 77b9e10495d84c0f87439f308c5a7409
+      template: 'INT MON-BKP Windows Server Backup'
+      name: 'INT MON-BKP Windows Server Backup'
+      description: |
+        Integrit MON-BKP connector for Windows Server Backup (wbadmin), read from the
+        Microsoft-Windows-Backup event log by the Zabbix agent 2 (active). Link next to INT MON-SRV Windows.
+        Event 4 = backup completed successfully; listed error IDs = backup failed or completed with errors.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-BKP
+      items:
+        - uuid: 8b957ca2cf984a468f9042afcff9957f
+          name: 'INT: Windows Server Backup: Result events'
+          type: ZABBIX_ACTIVE
+          key: 'eventlog[Microsoft-Windows-Backup,,,,"{$INT.BKP.WSB.EVENTID}",,skip]'
+          delay: 1m
+          history: 90d
+          value_type: LOG
+          trends: '0'
+          description: 'Success (4) and failure event IDs of Windows Server Backup.'
+          tags:
+            - tag: component
+              value: jobs
+          triggers:
+            - uuid: c8157947f81f45efa33ad1e9ee9863e0
+              expression: 'logeventid(/INT MON-BKP Windows Server Backup/eventlog[Microsoft-Windows-Backup,,,,"{$INT.BKP.WSB.EVENTID}",,skip],,"^4$")=0'
+              name: 'INT: Windows Server Backup failed'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'Last result event is not 4 (success). Resolves with the next successful backup.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 2ca1d06cf34d41caa6ad252af661574e
+          name: 'INT: Windows Server Backup: Success events'
+          type: ZABBIX_ACTIVE
+          key: 'eventlog[Microsoft-Windows-Backup,,,,"^4$",,skip]'
+          delay: 1m
+          history: 90d
+          value_type: LOG
+          trends: '0'
+          tags:
+            - tag: component
+              value: jobs
+          triggers:
+            - uuid: f411ac28db8b4772b2af77cb0c7078c4
+              expression: 'nodata(/INT MON-BKP Windows Server Backup/eventlog[Microsoft-Windows-Backup,,,,"^4$",,skip],{$INT.BKP.MAX.AGE.DISASTER})=1'
+              name: 'INT: Windows Server Backup: no successful backup for more than {$INT.BKP.MAX.AGE.DISASTER}'
+              priority: DISASTER
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: 4bef2ddf0e9c476dbfad3b6254165768
+              expression: 'nodata(/INT MON-BKP Windows Server Backup/eventlog[Microsoft-Windows-Backup,,,,"^4$",,skip],{$INT.BKP.MAX.AGE})=1'
+              name: 'INT: Windows Server Backup: no successful backup for more than {$INT.BKP.MAX.AGE}'
+              priority: HIGH
+              dependencies:
+                - name: 'INT: Windows Server Backup: no successful backup for more than {$INT.BKP.MAX.AGE.DISASTER}'
+                  expression: 'nodata(/INT MON-BKP Windows Server Backup/eventlog[Microsoft-Windows-Backup,,,,"^4$",,skip],{$INT.BKP.MAX.AGE.DISASTER})=1'
+              tags:
+                - tag: scope
+                  value: availability
+      tags:
+        - tag: service
+          value: MON-BKP
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.BKP.MAX.AGE}'
+          value: 26h
+        - macro: '{$INT.BKP.MAX.AGE.DISASTER}'
+          value: 52h
+        - macro: '{$INT.BKP.WSB.EVENTID}'
+          value: '^(4|5|8|9|17|22|49|50|52|100|517|518|521|527|528|544|545|546|561|564|612)$'
+          description: 'Event 4 = success, the rest = failure / completed with errors (Microsoft-Windows-Backup).'

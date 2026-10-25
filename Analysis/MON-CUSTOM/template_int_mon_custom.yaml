@@ -1,0 +1,502 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: db6e7d0f98b24d149017357f14f7d5d2
+      name: Templates/Integrit/MON-CUSTOM
+  templates:
+    - uuid: 2c392407bef14f15bc0df9b628bc4dd2
+      template: 'INT MON-CUSTOM Job'
+      name: 'INT MON-CUSTOM Job'
+      description: |
+        Integrit MON-CUSTOM pattern "job heartbeat / result": a batch job, export, import or script reports its result with
+        int-job-report (Linux) / int-job-report.ps1 (Windows) via zabbix_sender to trapper items.
+        {$INT.CUSTOM.JOBS} = "job-name|max-age;job2|max-age", e.g. "erp-export|25h;eshop-import|2h".
+        Failed run HIGH, missed run (no report within max age) HIGH, run longer than 2x the 30-day median WARNING.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-CUSTOM
+      discovery_rules:
+        - uuid: 4c492c3144e446efbe4ff1f1c629d58a
+          name: 'Checks from {$INT.CUSTOM.JOBS}'
+          type: SCRIPT
+          key: 'int.custom.discovery[job]'
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), names = String(p.fields).split(','), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.replace(/\\\|/g, '\u0001').split('|').map(function (x) { return x.replace(/\u0001/g, '|'); }), row = {};
+                if (f.length !== names.length) {
+                    throw 'Entry "' + entry + '" needs ' + names.length + ' fields separated by |: ' + p.fields;
+                }
+                names.forEach(function (n, i) { row[n.trim()] = f[i].trim(); });
+                out.push(row);
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: fields
+              value: '{#JOB},{#MAXAGE}'
+            - name: list
+              value: '{$INT.CUSTOM.JOBS}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'One check per entry of {$INT.CUSTOM.JOBS} (entries separated by ;, fields by |).'
+          item_prototypes:
+            - uuid: 00f8acf7d65b4e0bb23a4c6f84236f68
+              name: 'Job {#JOB}: Duration'
+              type: TRAP
+              key: 'int.custom.job.duration["{#JOB}"]'
+              delay: '0'
+              value_type: FLOAT
+              units: s
+              tags:
+                - tag: component
+                  value: job
+                - tag: job
+                  value: '{#JOB}'
+              trigger_prototypes:
+                - uuid: c4f25630f00e4a2a9eb621270a81e3ec
+                  expression: 'last(/INT MON-CUSTOM Job/int.custom.job.duration["{#JOB}"])>{$INT.CUSTOM.DURATION.FACTOR}*percentile(/INT MON-CUSTOM Job/int.custom.job.duration["{#JOB}"],30d,50) and count(/INT MON-CUSTOM Job/int.custom.job.duration["{#JOB}"],30d)>={$INT.CUSTOM.DURATION.MIN.SAMPLES}'
+                  name: 'INT: Job {#JOB} ran more than {$INT.CUSTOM.DURATION.FACTOR}x longer than usual'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  tags:
+                    - tag: scope
+                      value: performance
+            - uuid: d588c027449b4a9c9dc53c8bcc1f28f9
+              name: 'Job {#JOB}: Message'
+              type: TRAP
+              key: 'int.custom.job.message["{#JOB}"]'
+              delay: '0'
+              value_type: TEXT
+              trends: '0'
+              tags:
+                - tag: component
+                  value: job
+                - tag: job
+                  value: '{#JOB}'
+            - uuid: 6d5ebe55d10449f89ea8414cfd12377a
+              name: 'Job {#JOB}: Records processed'
+              type: TRAP
+              key: 'int.custom.job.records["{#JOB}"]'
+              delay: '0'
+              value_type: FLOAT
+              tags:
+                - tag: component
+                  value: job
+                - tag: job
+                  value: '{#JOB}'
+            - uuid: 5ca944e813f6431ab388d48df2226e42
+              name: 'Job {#JOB}: Exit code'
+              type: TRAP
+              key: 'int.custom.job.status["{#JOB}"]'
+              delay: '0'
+              value_type: FLOAT
+              tags:
+                - tag: component
+                  value: job
+                - tag: job
+                  value: '{#JOB}'
+              trigger_prototypes:
+                - uuid: 14ff43ec960b48bfb8062d17b2079527
+                  expression: 'last(/INT MON-CUSTOM Job/int.custom.job.status["{#JOB}"])<>0'
+                  name: 'INT: Job {#JOB} failed'
+                  opdata: 'Exit code {ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'See item "Job {#JOB}: Message" and the runbook in the check card.'
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: c8147a15af85405c8e3c43b055e7423b
+                  expression: 'nodata(/INT MON-CUSTOM Job/int.custom.job.status["{#JOB}"],{#MAXAGE})=1'
+                  name: 'INT: Job {#JOB} has not reported for {#MAXAGE}'
+                  priority: HIGH
+                  description: 'Missed run: the job did not start, hangs, or cannot reach Zabbix.'
+                  tags:
+                    - tag: scope
+                      value: availability
+      tags:
+        - tag: service
+          value: MON-CUSTOM
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.CUSTOM.DURATION.FACTOR}'
+          value: '2'
+        - macro: '{$INT.CUSTOM.DURATION.MIN.SAMPLES}'
+          value: '5'
+        - macro: '{$INT.CUSTOM.JOBS}'
+          description: 'job-name|max-age;... e.g. erp-export|25h;eshop-import|2h'
+    - uuid: 65c6d54f7c4a45f197b9ccdb148b969c
+      template: 'INT MON-CUSTOM File'
+      name: 'INT MON-CUSTOM File'
+      description: |
+        Integrit MON-CUSTOM pattern "file freshness": a file must be updated within max age and have at least min size (agent 2 active).
+        {$INT.CUSTOM.FILES} = "label|full-path|max-age|min-bytes;...", e.g. "pohoda-export|D:\Export\pohoda.xml|25h|1024".
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-CUSTOM
+      discovery_rules:
+        - uuid: ffe3f5f50d594dcda3ce823caa6c7ea4
+          name: 'Checks from {$INT.CUSTOM.FILES}'
+          type: SCRIPT
+          key: 'int.custom.discovery[file]'
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), names = String(p.fields).split(','), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.replace(/\\\|/g, '\u0001').split('|').map(function (x) { return x.replace(/\u0001/g, '|'); }), row = {};
+                if (f.length !== names.length) {
+                    throw 'Entry "' + entry + '" needs ' + names.length + ' fields separated by |: ' + p.fields;
+                }
+                names.forEach(function (n, i) { row[n.trim()] = f[i].trim(); });
+                out.push(row);
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: fields
+              value: '{#LABEL},{#PATH},{#MAXAGE},{#MINSIZE}'
+            - name: list
+              value: '{$INT.CUSTOM.FILES}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'One check per entry of {$INT.CUSTOM.FILES} (entries separated by ;, fields by |).'
+          item_prototypes:
+            - uuid: 8f4a0ca80e1b43c3ab1a3995b463a26a
+              name: 'File {#LABEL}: Size'
+              type: ZABBIX_ACTIVE
+              key: 'vfs.file.size["{#PATH}"]'
+              delay: 5m
+              units: B
+              tags:
+                - tag: component
+                  value: file
+                - tag: check
+                  value: '{#LABEL}'
+              trigger_prototypes:
+                - uuid: 60230d6d8bce49159ad5590a184e6653
+                  expression: 'last(/INT MON-CUSTOM File/vfs.file.size["{#PATH}"])<{#MINSIZE}'
+                  name: 'INT: File {#LABEL} is smaller than {#MINSIZE} B'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: AVERAGE
+                  description: '{#PATH} exists but is empty or truncated.'
+                  tags:
+                    - tag: scope
+                      value: availability
+            - uuid: 84f3e13f08834ed6a7dbce134f131043
+              name: 'File {#LABEL}: Modified'
+              type: ZABBIX_ACTIVE
+              key: 'vfs.file.time["{#PATH}",modify]'
+              delay: 5m
+              units: unixtime
+              tags:
+                - tag: component
+                  value: file
+                - tag: check
+                  value: '{#LABEL}'
+              trigger_prototypes:
+                - uuid: 17f6371de5d34ed9a66ae312b687f386
+                  expression: 'now()-last(/INT MON-CUSTOM File/vfs.file.time["{#PATH}",modify])>{#MAXAGE} or nodata(/INT MON-CUSTOM File/vfs.file.time["{#PATH}",modify],30m)=1'
+                  name: 'INT: File {#LABEL} not updated for {#MAXAGE} (or missing)'
+                  opdata: 'Modified: {ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: '{#PATH} is older than {#MAXAGE} or does not exist (item unsupported).'
+                  tags:
+                    - tag: scope
+                      value: availability
+      tags:
+        - tag: service
+          value: MON-CUSTOM
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.CUSTOM.FILES}'
+          description: 'label|full-path|max-age|min-bytes;...'
+    - uuid: 75c08592efab48e585a16091af417deb
+      template: 'INT MON-CUSTOM Log'
+      name: 'INT MON-CUSTOM Log'
+      description: |
+        Integrit MON-CUSTOM pattern "log pattern": count lines matching a regex in an application log (agent 2 active, log[] item).
+        {$INT.CUSTOM.LOGS} = "label|full-path|regex|count;...", e.g. "erp|C:\\ERP\\logs\\server.log|ERROR\\|FATAL|3".
+        Write a | inside the regex as \\| and avoid double quotes. AVERAGE when the regex matches at least <count> times in {$INT.CUSTOM.LOG.PERIOD}.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-CUSTOM
+      discovery_rules:
+        - uuid: 905c3ef7c34a49978bad45bd3c1c9cad
+          name: 'Checks from {$INT.CUSTOM.LOGS}'
+          type: SCRIPT
+          key: 'int.custom.discovery[log]'
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), names = String(p.fields).split(','), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.replace(/\\\|/g, '\u0001').split('|').map(function (x) { return x.replace(/\u0001/g, '|'); }), row = {};
+                if (f.length !== names.length) {
+                    throw 'Entry "' + entry + '" needs ' + names.length + ' fields separated by |: ' + p.fields;
+                }
+                names.forEach(function (n, i) { row[n.trim()] = f[i].trim(); });
+                out.push(row);
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: fields
+              value: '{#LABEL},{#PATH},{#REGEX},{#COUNT}'
+            - name: list
+              value: '{$INT.CUSTOM.LOGS}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'One check per entry of {$INT.CUSTOM.LOGS} (entries separated by ;, fields by |).'
+          item_prototypes:
+            - uuid: 33046d117e0741de912519fb0aaaef2b
+              name: 'Log {#LABEL}: Matching lines'
+              type: ZABBIX_ACTIVE
+              key: 'log["{#PATH}","{#REGEX}",,,skip]'
+              delay: 1m
+              history: 31d
+              value_type: LOG
+              trends: '0'
+              tags:
+                - tag: component
+                  value: log
+                - tag: check
+                  value: '{#LABEL}'
+              trigger_prototypes:
+                - uuid: 5413ddc9b85246f1921d4b6ad0d6e513
+                  expression: 'count(/INT MON-CUSTOM Log/log["{#PATH}","{#REGEX}",,,skip],{$INT.CUSTOM.LOG.PERIOD})>={#COUNT}'
+                  name: 'INT: Log {#LABEL}: pattern matched {#COUNT}+ times in {$INT.CUSTOM.LOG.PERIOD}'
+                  opdata: 'Last: {ITEM.LASTVALUE1}'
+                  priority: AVERAGE
+                  tags:
+                    - tag: scope
+                      value: availability
+      tags:
+        - tag: service
+          value: MON-CUSTOM
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.CUSTOM.LOG.PERIOD}'
+          value: 15m
+        - macro: '{$INT.CUSTOM.LOGS}'
+          description: 'label|full-path|regex|count;...'
+    - uuid: 9202685fc7334575971322ef8cf7510b
+      template: 'INT MON-CUSTOM Process'
+      name: 'INT MON-CUSTOM Process'
+      description: |
+        Integrit MON-CUSTOM pattern "process": at least N processes with the given name must run (agent 2 active, proc.num).
+        {$INT.CUSTOM.PROCS} = "label|process-name|min-count;...", e.g. "erp-server|ErpServer.exe|1;sync|node|2".
+        Windows services: use the MON-SRV critical service list instead.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-CUSTOM
+      discovery_rules:
+        - uuid: b3c3395dc68c4d7a9fd5428a294e9a1c
+          name: 'Checks from {$INT.CUSTOM.PROCS}'
+          type: SCRIPT
+          key: 'int.custom.discovery[process]'
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), names = String(p.fields).split(','), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.replace(/\\\|/g, '\u0001').split('|').map(function (x) { return x.replace(/\u0001/g, '|'); }), row = {};
+                if (f.length !== names.length) {
+                    throw 'Entry "' + entry + '" needs ' + names.length + ' fields separated by |: ' + p.fields;
+                }
+                names.forEach(function (n, i) { row[n.trim()] = f[i].trim(); });
+                out.push(row);
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: fields
+              value: '{#LABEL},{#PROC},{#MIN}'
+            - name: list
+              value: '{$INT.CUSTOM.PROCS}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'One check per entry of {$INT.CUSTOM.PROCS} (entries separated by ;, fields by |).'
+          item_prototypes:
+            - uuid: 4876011e8fb049f98fd84abca1c4bfb0
+              name: 'Process {#LABEL}: Count'
+              type: ZABBIX_ACTIVE
+              key: 'proc.num["{#PROC}"]'
+              delay: 1m
+              tags:
+                - tag: component
+                  value: process
+                - tag: check
+                  value: '{#LABEL}'
+              trigger_prototypes:
+                - uuid: 38bfd612c1eb4395bb0dbe59f201b2de
+                  expression: 'max(/INT MON-CUSTOM Process/proc.num["{#PROC}"],#3)<{#MIN}'
+                  name: 'INT: Process {#LABEL} ({#PROC}) is not running'
+                  opdata: 'Running: {ITEM.LASTVALUE1}, expected {#MIN}'
+                  priority: HIGH
+                  tags:
+                    - tag: scope
+                      value: availability
+      tags:
+        - tag: service
+          value: MON-CUSTOM
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.CUSTOM.PROCS}'
+          description: 'label|process-name|min-count;...'
+    - uuid: 1d6b1837445343658cd063dcd67ae9bb
+      template: 'INT MON-CUSTOM HTTP'
+      name: 'INT MON-CUSTOM HTTP'
+      description: |
+        Integrit MON-CUSTOM pattern "HTTP / API health": a URL must answer HTTP 200 and the body must match a regex (HTTP agent on the proxy).
+        {$INT.CUSTOM.URLS} = "label|url|body-regex;...", e.g. "api|https://api.acme.cz/health|status.:.ok".
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-CUSTOM
+      discovery_rules:
+        - uuid: 36cd558c91f64620b7b3b4996d2efc5a
+          name: 'Checks from {$INT.CUSTOM.URLS}'
+          type: SCRIPT
+          key: 'int.custom.discovery[http]'
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), names = String(p.fields).split(','), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.replace(/\\\|/g, '\u0001').split('|').map(function (x) { return x.replace(/\u0001/g, '|'); }), row = {};
+                if (f.length !== names.length) {
+                    throw 'Entry "' + entry + '" needs ' + names.length + ' fields separated by |: ' + p.fields;
+                }
+                names.forEach(function (n, i) { row[n.trim()] = f[i].trim(); });
+                out.push(row);
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: fields
+              value: '{#LABEL},{#URL},{#REGEX}'
+            - name: list
+              value: '{$INT.CUSTOM.URLS}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'One check per entry of {$INT.CUSTOM.URLS} (entries separated by ;, fields by |).'
+          item_prototypes:
+            - uuid: 285c819dfb2042fcadcda18b0dae194e
+              name: 'HTTP {#LABEL}: Body matches'
+              type: HTTP_AGENT
+              key: 'int.custom.http["{#LABEL}"]'
+              delay: 1m
+              timeout: 15s
+              url: '{#URL}'
+              status_codes: '200'
+              description: '1 = HTTP 200 and body matches {#REGEX}; 0 = other status, timeout or mismatch.'
+              preprocessing:
+                - type: REGEX
+                  parameters:
+                    - '{#REGEX}'
+                    - '1'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              tags:
+                - tag: component
+                  value: http
+                - tag: check
+                  value: '{#LABEL}'
+              trigger_prototypes:
+                - uuid: f114876b48714237a3ddf0ce5da5712a
+                  expression: 'max(/INT MON-CUSTOM HTTP/int.custom.http["{#LABEL}"],#2)=0 or nodata(/INT MON-CUSTOM HTTP/int.custom.http["{#LABEL}"],5m)=1'
+                  name: 'INT: HTTP check {#LABEL} fails'
+                  priority: HIGH
+                  description: '{#URL} does not return 200 with the expected content twice in a row.'
+                  tags:
+                    - tag: scope
+                      value: availability
+      tags:
+        - tag: service
+          value: MON-CUSTOM
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.CUSTOM.URLS}'
+          description: 'label|url|body-regex;...'
+    - uuid: 178135680f7348cbbb1212b61d5a4b55
+      template: 'INT MON-CUSTOM TCP'
+      name: 'INT MON-CUSTOM TCP'
+      description: |
+        Integrit MON-CUSTOM pattern "TCP port": a legacy service port must accept connections (simple check from the proxy).
+        {$INT.CUSTOM.PORTS} = "label|host|port;...", e.g. "pohoda-sql|srv-db01.acme.local|1433".
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-CUSTOM
+      discovery_rules:
+        - uuid: a7499c30d1584afa932228d9890930fa
+          name: 'Checks from {$INT.CUSTOM.PORTS}'
+          type: SCRIPT
+          key: 'int.custom.discovery[tcp]'
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), names = String(p.fields).split(','), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.replace(/\\\|/g, '\u0001').split('|').map(function (x) { return x.replace(/\u0001/g, '|'); }), row = {};
+                if (f.length !== names.length) {
+                    throw 'Entry "' + entry + '" needs ' + names.length + ' fields separated by |: ' + p.fields;
+                }
+                names.forEach(function (n, i) { row[n.trim()] = f[i].trim(); });
+                out.push(row);
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: fields
+              value: '{#LABEL},{#HOST},{#PORT}'
+            - name: list
+              value: '{$INT.CUSTOM.PORTS}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'One check per entry of {$INT.CUSTOM.PORTS} (entries separated by ;, fields by |).'
+          item_prototypes:
+            - uuid: b4114d845d2647278e51fda32d7dd7f0
+              name: 'TCP {#LABEL}: Port {#PORT} on {#HOST}'
+              type: SIMPLE
+              key: 'net.tcp.service[tcp,{#HOST},{#PORT}]'
+              delay: 1m
+              tags:
+                - tag: component
+                  value: tcp
+                - tag: check
+                  value: '{#LABEL}'
+              trigger_prototypes:
+                - uuid: 5e57936f5a344b29a40751c5dd00cbd5
+                  expression: 'max(/INT MON-CUSTOM TCP/net.tcp.service[tcp,{#HOST},{#PORT}],#3)=0'
+                  name: 'INT: TCP check {#LABEL}: {#HOST}:{#PORT} not reachable'
+                  priority: HIGH
+                  tags:
+                    - tag: scope
+                      value: availability
+      tags:
+        - tag: service
+          value: MON-CUSTOM
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.CUSTOM.PORTS}'
+          description: 'label|host|port;...'

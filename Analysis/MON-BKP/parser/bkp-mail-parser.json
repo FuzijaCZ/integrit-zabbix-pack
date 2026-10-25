@@ -1,0 +1,16 @@
+{
+  "tenant_id": "integrit.cz",
+  "client_id": "<Application (client) ID of Entra app 'Integrit Zabbix Backup Reports'>",
+  "client_secret_file": "/etc/integrit/bkp-mail-parser.secret",
+  "mailbox": "backup-reports@integrit.cz",
+  "recipient_local_part": "backup-reports",
+  "lookback_hours": 72,
+  "zabbix_sender": "/usr/bin/zabbix_sender",
+  "zabbix_server": "127.0.0.1",
+  "zabbix_port": 10051,
+  "tls_psk_identity": "",
+  "tls_psk_file": "",
+  "platform_host": "INT-PLATFORM-BKP-PARSER",
+  "rules_file": "/usr/local/lib/integrit/bkp-mail-parser/bkp-mail-rules.json",
+  "state_file": "/var/lib/integrit/bkp-mail-parser/state.json"
+}

@@ -1,0 +1,171 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 68b85b414b384600991e4893590421e3
+      name: Templates/Integrit/MON-UPS
+  templates:
+    - uuid: e4d3f72ff1374be0a9b38218332a7e7a
+      template: 'INT MON-UPS APC'
+      name: 'INT MON-UPS APC'
+      description: |
+        Integrit MON-UPS wrapper for APC UPS with Network Management Card (SNMP, site proxy).
+        Links the official 'APC UPS by SNMP'. Overrides: output load HIGH at 90 %.
+        Adds: on battery HIGH (after {$INT.UPS.ONBATT.DELAY}) / DISASTER when runtime < {$INT.UPS.RUNTIME.MIN},
+        low battery DISASTER, runtime below minimum HIGH, sustained load WARNING, self-test failed HIGH,
+        battery older than {$INT.UPS.BATTERY.MAX.AGE.YEARS} years WARNING.
+        The official AVERAGE "UPS is on battery" / "Battery is Low" stay active as well.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'APC UPS by SNMP'
+      groups:
+        - name: Templates/Integrit/MON-UPS
+      items:
+        - uuid: 5ccb5f96d36443dba280a2f2e5db2f91
+          name: 'INT: Battery last replaced (YYYYMMDD)'
+          type: DEPENDENT
+          key: int.ups.apc.battery.replaced
+          delay: '0'
+          description: 'Battery last replace date converted to YYYYMMDD (from mm/dd/yy or mm/dd/yyyy). Set the date on the NMC after every battery replacement.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var m = String(value).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+                  if (!m) {
+                      throw 'Unknown date format: ' + value;
+                  }
+                  var y = parseInt(m[3], 10);
+                  if (y < 100) {
+                      y += 2000;
+                  }
+                  return y * 10000 + parseInt(m[1], 10) * 100 + parseInt(m[2], 10);
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'battery.last_replace_date[upsBasicBatteryLastReplaceDate]'
+          tags:
+            - tag: component
+              value: battery
+          triggers:
+            - uuid: da44c442bf64459cb7e6cda97e91aaa4
+              expression: 'date()>last(/INT MON-UPS APC/int.ups.apc.battery.replaced)+{$INT.UPS.BATTERY.MAX.AGE.YEARS}*10000'
+              name: 'INT: UPS battery is older than {$INT.UPS.BATTERY.MAX.AGE.YEARS} years'
+              opdata: 'Replaced: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Plan battery replacement. Lead-acid UPS batteries typically last 3-5 years.'
+              tags:
+                - tag: scope
+                  value: capacity
+        - uuid: 085ebb593b2e4e889bde2f7700bf8f3f
+          name: 'INT: Self-test result'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.318.1.1.1.7.2.3.0]'
+          key: int.ups.apc.selftest
+          delay: 1h
+          valuemap:
+            name: 'INT APC self-test result'
+          description: 'MIB: PowerNet-MIB upsAdvTestDiagnosticsResults.'
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: component
+              value: battery
+          triggers:
+            - uuid: 1d98525308b94934a3f41d5ba53582d1
+              expression: 'last(/INT MON-UPS APC/int.ups.apc.selftest)=2'
+              name: 'INT: UPS self-test failed'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'The last battery self-test failed. The UPS may not carry the load in a power outage.'
+              tags:
+                - tag: scope
+                  value: availability
+      tags:
+        - tag: service
+          value: MON-UPS
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.UPS.BATTERY.MAX.AGE.YEARS}'
+          value: '4'
+        - macro: '{$INT.UPS.LOAD.SUSTAINED.MAX}'
+          value: '80'
+          description: 'WARNING when load stays above this % for {$INT.UPS.LOAD.SUSTAINED.PERIOD}.'
+        - macro: '{$INT.UPS.LOAD.SUSTAINED.PERIOD}'
+          value: 1h
+        - macro: '{$INT.UPS.ONBATT.DELAY}'
+          value: 1m
+          description: 'On battery longer than this raises HIGH (short blips stay official AVERAGE only).'
+        - macro: '{$INT.UPS.RUNTIME.MIN}'
+          value: 10m
+          description: 'Required runtime for this UPS (customer requirement). Set per host.'
+        - macro: '{$UPS.OUTPUT.MAX.WARN}'
+          value: '90'
+          description: 'Override of official 80: HIGH "Output load is high" at 90 %.'
+      valuemaps:
+        - uuid: 20b09bc43db342f6992a3f2f909af4d1
+          name: 'INT APC self-test result'
+          mappings:
+            - value: '1'
+              newvalue: OK
+            - value: '2'
+              newvalue: Failed
+            - value: '3'
+              newvalue: 'Invalid test'
+            - value: '4'
+              newvalue: 'Test in progress'
+  triggers:
+    - uuid: 2bf20e23e7b64e919696d25ce39b1eaa
+      expression: 'last(/INT MON-UPS APC/battery.status[upsBasicBatteryStatus])=3 and last(/INT MON-UPS APC/output.status[upsBasicOutputStatus])=3'
+      name: 'INT: UPS battery is low while on battery: shutdown imminent'
+      priority: DISASTER
+      description: 'The UPS will switch off soon. Protected systems lose power.'
+      tags:
+        - tag: scope
+          value: availability
+    - uuid: fe9e43f79aa8405dbd7565773ef1a2d8
+      expression: 'last(/INT MON-UPS APC/output.status[upsBasicOutputStatus])=3 and last(/INT MON-UPS APC/battery.runtime_remaining[upsAdvBatteryRunTimeRemaining])<{$INT.UPS.RUNTIME.MIN}'
+      name: 'INT: UPS on battery with runtime below {$INT.UPS.RUNTIME.MIN}'
+      opdata: 'Runtime: {ITEM.LASTVALUE2}'
+      priority: DISASTER
+      description: 'Power outage and the remaining runtime is below the required minimum.'
+      dependencies:
+        - name: 'INT: UPS battery is low while on battery: shutdown imminent'
+          expression: 'last(/INT MON-UPS APC/battery.status[upsBasicBatteryStatus])=3 and last(/INT MON-UPS APC/output.status[upsBasicOutputStatus])=3'
+      tags:
+        - tag: scope
+          value: availability
+    - uuid: e905723c3f3244d0aabdd7253710d45f
+      expression: 'min(/INT MON-UPS APC/output.status[upsBasicOutputStatus],{$INT.UPS.ONBATT.DELAY})=3 and max(/INT MON-UPS APC/output.status[upsBasicOutputStatus],{$INT.UPS.ONBATT.DELAY})=3'
+      name: 'INT: UPS is on battery for more than {$INT.UPS.ONBATT.DELAY}'
+      priority: HIGH
+      description: 'Power outage at the site. If the site becomes unreachable shortly after, it is a power loss.'
+      dependencies:
+        - name: 'INT: UPS on battery with runtime below {$INT.UPS.RUNTIME.MIN}'
+          expression: 'last(/INT MON-UPS APC/output.status[upsBasicOutputStatus])=3 and last(/INT MON-UPS APC/battery.runtime_remaining[upsAdvBatteryRunTimeRemaining])<{$INT.UPS.RUNTIME.MIN}'
+      tags:
+        - tag: scope
+          value: availability
+    - uuid: 6c82325a2f7c49178c08999f56d4ec94
+      expression: 'max(/INT MON-UPS APC/battery.runtime_remaining[upsAdvBatteryRunTimeRemaining],15m)<{$INT.UPS.RUNTIME.MIN} and last(/INT MON-UPS APC/output.status[upsBasicOutputStatus])<>3'
+      name: 'INT: UPS runtime at current load is below {$INT.UPS.RUNTIME.MIN}'
+      opdata: 'Runtime: {ITEM.LASTVALUE1}'
+      priority: HIGH
+      description: 'On mains power, but the estimated runtime is below the requirement: too much load or worn battery.'
+      tags:
+        - tag: scope
+          value: capacity
+    - uuid: acabf612243e44cb918982cc77683af4
+      expression: 'min(/INT MON-UPS APC/output.load[upsHighPrecOutputLoad],{$INT.UPS.LOAD.SUSTAINED.PERIOD})>{$INT.UPS.LOAD.SUSTAINED.MAX}'
+      name: 'INT: UPS load above {$INT.UPS.LOAD.SUSTAINED.MAX}% for {$INT.UPS.LOAD.SUSTAINED.PERIOD}'
+      opdata: 'Load: {ITEM.LASTVALUE1}'
+      priority: WARNING
+      dependencies:
+        - name: 'APC UPS: Output load is high'
+          expression: 'min(/INT MON-UPS APC/output.load[upsHighPrecOutputLoad],{$TIME.PERIOD}) > {$UPS.OUTPUT.MAX.WARN}'
+      tags:
+        - tag: scope
+          value: capacity

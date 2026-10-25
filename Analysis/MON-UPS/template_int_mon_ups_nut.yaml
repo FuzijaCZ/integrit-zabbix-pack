@@ -1,0 +1,205 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 68b85b414b384600991e4893590421e3
+      name: Templates/Integrit/MON-UPS
+  templates:
+    - uuid: 34759e2e66d74f8dae30775d383769ac
+      template: 'INT MON-UPS NUT'
+      name: 'INT MON-UPS NUT'
+      description: |
+        Integrit MON-UPS template for a UPS without network card, connected by USB to a Linux server running
+        Network UPS Tools (NUT). Read by the server's Zabbix agent 2 (active) with `upsc` (UserParameter int.ups.nut).
+        Link on the MON-SRV Linux host the UPS is connected to. Requires linux/int_mon_ups.conf.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-UPS
+      items:
+        - uuid: f4a3ba5b5ec84abfac48d7d26f2cc947
+          name: 'NUT: Battery charge'
+          type: DEPENDENT
+          key: int.ups.nut.charge
+          delay: '0'
+          units: '%'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$["battery.charge"]'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.ups.nut[{$INT.UPS.NUT.NAME}]'
+          tags:
+            - tag: component
+              value: battery
+        - uuid: 540d50dc215a4b069f7f0121196e21a9
+          name: 'NUT: Get data'
+          type: ZABBIX_ACTIVE
+          key: 'int.ups.nut[{$INT.UPS.NUT.NAME}]'
+          delay: 1m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 10s
+          description: 'All `upsc <name>@localhost` variables as JSON.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var out = {};
+                  value.split('\n').forEach(function (line) {
+                      var i = line.indexOf(': ');
+                      if (i > 0) {
+                          out[line.substring(0, i).trim()] = line.substring(i + 2).trim();
+                      }
+                  });
+                  if (!out['ups.status']) {
+                      throw 'upsc returned no ups.status: ' + value.substring(0, 200);
+                  }
+                  return JSON.stringify(out);
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 7532ee1f65d447099df6105b69f0abfa
+          name: 'NUT: Load'
+          type: DEPENDENT
+          key: int.ups.nut.load
+          delay: '0'
+          units: '%'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$["ups.load"]'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.ups.nut[{$INT.UPS.NUT.NAME}]'
+          tags:
+            - tag: component
+              value: output
+          triggers:
+            - uuid: 91771ace0d874780bd70eb1631176c08
+              expression: 'min(/INT MON-UPS NUT/int.ups.nut.load,15m)>{$INT.UPS.LOAD.HIGH}'
+              name: 'INT: UPS output load above {$INT.UPS.LOAD.HIGH}%'
+              opdata: 'Load: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              tags:
+                - tag: scope
+                  value: capacity
+            - uuid: d1b4425dafe947678b9ddc01b2a6582b
+              expression: 'min(/INT MON-UPS NUT/int.ups.nut.load,{$INT.UPS.LOAD.SUSTAINED.PERIOD})>{$INT.UPS.LOAD.SUSTAINED.MAX}'
+              name: 'INT: UPS load above {$INT.UPS.LOAD.SUSTAINED.MAX}% for {$INT.UPS.LOAD.SUSTAINED.PERIOD}'
+              opdata: 'Load: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              dependencies:
+                - name: 'INT: UPS output load above {$INT.UPS.LOAD.HIGH}%'
+                  expression: 'min(/INT MON-UPS NUT/int.ups.nut.load,15m)>{$INT.UPS.LOAD.HIGH}'
+              tags:
+                - tag: scope
+                  value: capacity
+        - uuid: 3b30694b2cb6477aaadeb94327c8f9d5
+          name: 'NUT: Runtime remaining'
+          type: DEPENDENT
+          key: int.ups.nut.runtime
+          delay: '0'
+          units: s
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$["battery.runtime"]'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.ups.nut[{$INT.UPS.NUT.NAME}]'
+          tags:
+            - tag: component
+              value: battery
+        - uuid: d93baa7cecfc40a98e9aed25ebde7a13
+          name: 'NUT: Status'
+          type: DEPENDENT
+          key: int.ups.nut.status
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          description: 'NUT ups.status flags: OL = on line, OB = on battery, LB = low battery, RB = replace battery, BYPASS, OFF, OVER, CHRG.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$["ups.status"]'
+          master_item:
+            key: 'int.ups.nut[{$INT.UPS.NUT.NAME}]'
+          tags:
+            - tag: component
+              value: status
+          triggers:
+            - uuid: 0f1f149dcbeb4de99c6bf4b479ddfe20
+              expression: 'find(/INT MON-UPS NUT/int.ups.nut.status,,"regexp","\\bRB\\b")=1'
+              name: 'INT: UPS battery needs replacement'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: HIGH
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: 6aa2467fad5c4bf5bae8735c5261c546
+              expression: 'find(/INT MON-UPS NUT/int.ups.nut.status,,"regexp","\\bOB\\b")=1 and find(/INT MON-UPS NUT/int.ups.nut.status,,"regexp","\\bLB\\b")=1'
+              name: 'INT: UPS battery is low while on battery: shutdown imminent'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: DISASTER
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: b804344eb2cc4ba4bebd039b1992f234
+              expression: 'count(/INT MON-UPS NUT/int.ups.nut.status,{$INT.UPS.ONBATT.DELAY},"regexp","\\bOB\\b")>0 and count(/INT MON-UPS NUT/int.ups.nut.status,{$INT.UPS.ONBATT.DELAY},"regexp","\\bOL\\b")=0'
+              name: 'INT: UPS is on battery for more than {$INT.UPS.ONBATT.DELAY}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: HIGH
+              dependencies:
+                - name: 'INT: UPS battery is low while on battery: shutdown imminent'
+                  expression: 'find(/INT MON-UPS NUT/int.ups.nut.status,,"regexp","\\bOB\\b")=1 and find(/INT MON-UPS NUT/int.ups.nut.status,,"regexp","\\bLB\\b")=1'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: ca8cfcc20c494b728caf45e660ef834f
+              expression: 'nodata(/INT MON-UPS NUT/int.ups.nut.status,5m)=1'
+              name: 'INT: UPS data from NUT not available'
+              priority: AVERAGE
+              description: 'upsc fails: USB cable, NUT driver (upsdrvctl) or upsd not running.'
+              tags:
+                - tag: scope
+                  value: availability
+      tags:
+        - tag: service
+          value: MON-UPS
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.UPS.LOAD.HIGH}'
+          value: '90'
+        - macro: '{$INT.UPS.LOAD.SUSTAINED.MAX}'
+          value: '80'
+        - macro: '{$INT.UPS.LOAD.SUSTAINED.PERIOD}'
+          value: 1h
+        - macro: '{$INT.UPS.NUT.NAME}'
+          value: ups
+          description: 'UPS name from /etc/nut/ups.conf (letters, digits, dash, underscore).'
+        - macro: '{$INT.UPS.ONBATT.DELAY}'
+          value: 1m
+        - macro: '{$INT.UPS.RUNTIME.MIN}'
+          value: 10m
+          description: 'Required runtime for this UPS. Set per host.'
+  triggers:
+    - uuid: d6caff75327141c590d0e2b63982316e
+      expression: 'find(/INT MON-UPS NUT/int.ups.nut.status,,"regexp","\\bOB\\b")=1 and last(/INT MON-UPS NUT/int.ups.nut.runtime)<{$INT.UPS.RUNTIME.MIN}'
+      name: 'INT: UPS on battery with runtime below {$INT.UPS.RUNTIME.MIN}'
+      opdata: 'Runtime: {ITEM.LASTVALUE2}'
+      priority: DISASTER
+      tags:
+        - tag: scope
+          value: availability
+    - uuid: 37c5501480864eae8df35c2f22b51dd3
+      expression: 'max(/INT MON-UPS NUT/int.ups.nut.runtime,15m)<{$INT.UPS.RUNTIME.MIN} and find(/INT MON-UPS NUT/int.ups.nut.status,,"regexp","\\bOL\\b")=1'
+      name: 'INT: UPS runtime at current load is below {$INT.UPS.RUNTIME.MIN}'
+      opdata: 'Runtime: {ITEM.LASTVALUE1}'
+      priority: HIGH
+      tags:
+        - tag: scope
+          value: capacity

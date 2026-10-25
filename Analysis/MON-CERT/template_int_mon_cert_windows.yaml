@@ -1,0 +1,249 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 80321abb105b4e9aa44afb253e75bb87
+      name: Templates/Integrit/MON-CERT
+  templates:
+    - uuid: 77078665495748e987b1596d76a6fefb
+      template: 'INT MON-CERT Windows store'
+      name: 'INT MON-CERT Windows store'
+      description: |
+        Integrit MON-CERT: certificates with a private key in the Windows LocalMachine\My store (agent 2 active, PowerShell).
+        Renewed (superseded) and long-expired left-over certificates are ignored by the script; self-signed and device /
+        Entra-join certificates are filtered by macros.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-CERT
+      items:
+        - uuid: 4e38219ad0df4c0fbcd65ebbbea0343d
+          name: 'Certificate store raw'
+          type: ZABBIX_ACTIVE
+          key: int.cert.store
+          delay: 1h
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 30s
+          tags:
+            - tag: component
+              value: raw
+      discovery_rules:
+        - uuid: 9340697a320b4a7d90743d2a19790e96
+          name: 'Machine certificates discovery'
+          type: DEPENDENT
+          key: int.cert.store.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#ISSUER}'
+                value: '{$INT.CERT.STORE.ISSUER.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: A
+              - macro: '{#SELF}'
+                value: '{$INT.CERT.STORE.SELF.MATCHES}'
+                formulaid: B
+              - macro: '{#SUBJECT}'
+                value: '{$INT.CERT.STORE.SUBJECT.MATCHES}'
+                formulaid: C
+              - macro: '{#SUBJECT}'
+                value: '{$INT.CERT.STORE.SUBJECT.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: D
+          lifetime: 7d
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: 8c4a024ba14841e690351fb50b0c95f4
+              name: 'Certificate {#SUBJECT}: Days left'
+              type: DEPENDENT
+              key: 'int.cert.store.days[{#THUMB}]'
+              delay: '0'
+              units: d
+              description: 'Thumbprint {#THUMB}, issuer {#ISSUER}.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.thumb==''{#THUMB}'')].days.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: int.cert.store
+              tags:
+                - tag: component
+                  value: certificate
+          trigger_prototypes:
+            - uuid: 4f1f32924a534957ade7e509dd6f1eb9
+              expression: 'last(/INT MON-CERT Windows store/int.cert.store.days[{#THUMB}])<0 and nodata(/INT MON-CERT Windows store/int.cert.store.days[{#THUMB}],{$INT.CERT.STORE.FRESH})=0'
+              name: 'INT: Certificate {#SUBJECT} on {HOST.NAME} expired'
+              priority: HIGH
+              description: 'Services bound to it (IIS, RDP, LDAPS, ADFS, SQL TLS, SAML signing) fail. Thumbprint {#THUMB}, issuer {#ISSUER}.'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: e3497583f21f47839e0119af9fd820f2
+              expression: 'last(/INT MON-CERT Windows store/int.cert.store.days[{#THUMB}])<{$INT.CERT.DAYS.HIGH} and nodata(/INT MON-CERT Windows store/int.cert.store.days[{#THUMB}],{$INT.CERT.STORE.FRESH})=0'
+              name: 'INT: Certificate {#SUBJECT} on {HOST.NAME} expires in {ITEM.LASTVALUE1} (< {$INT.CERT.DAYS.HIGH} d)'
+              priority: HIGH
+              dependencies:
+                - name: 'INT: Certificate {#SUBJECT} on {HOST.NAME} expired'
+                  expression: 'last(/INT MON-CERT Windows store/int.cert.store.days[{#THUMB}])<0 and nodata(/INT MON-CERT Windows store/int.cert.store.days[{#THUMB}],{$INT.CERT.STORE.FRESH})=0'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: 4366eebbb9244f639b0139aef8da479f
+              expression: 'last(/INT MON-CERT Windows store/int.cert.store.days[{#THUMB}])<{$INT.CERT.DAYS.AVERAGE} and nodata(/INT MON-CERT Windows store/int.cert.store.days[{#THUMB}],{$INT.CERT.STORE.FRESH})=0'
+              name: 'INT: Certificate {#SUBJECT} on {HOST.NAME} expires in {ITEM.LASTVALUE1} (< {$INT.CERT.DAYS.AVERAGE} d)'
+              priority: AVERAGE
+              dependencies:
+                - name: 'INT: Certificate {#SUBJECT} on {HOST.NAME} expires in {ITEM.LASTVALUE1} (< {$INT.CERT.DAYS.HIGH} d)'
+                  expression: 'last(/INT MON-CERT Windows store/int.cert.store.days[{#THUMB}])<{$INT.CERT.DAYS.HIGH} and nodata(/INT MON-CERT Windows store/int.cert.store.days[{#THUMB}],{$INT.CERT.STORE.FRESH})=0'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: 5219ea56b63b4510bd2a56ddd11144d8
+              expression: 'last(/INT MON-CERT Windows store/int.cert.store.days[{#THUMB}])<{$INT.CERT.DAYS.WARN} and nodata(/INT MON-CERT Windows store/int.cert.store.days[{#THUMB}],{$INT.CERT.STORE.FRESH})=0'
+              name: 'INT: Certificate {#SUBJECT} on {HOST.NAME} expires in {ITEM.LASTVALUE1} (< {$INT.CERT.DAYS.WARN} d)'
+              priority: WARNING
+              description: 'Plan the renewal. A renewed certificate with the same subject replaces this one automatically.'
+              dependencies:
+                - name: 'INT: Certificate {#SUBJECT} on {HOST.NAME} expires in {ITEM.LASTVALUE1} (< {$INT.CERT.DAYS.AVERAGE} d)'
+                  expression: 'last(/INT MON-CERT Windows store/int.cert.store.days[{#THUMB}])<{$INT.CERT.DAYS.AVERAGE} and nodata(/INT MON-CERT Windows store/int.cert.store.days[{#THUMB}],{$INT.CERT.STORE.FRESH})=0'
+              tags:
+                - tag: scope
+                  value: availability
+          master_item:
+            key: int.cert.store
+          lld_macro_paths:
+            - lld_macro: '{#ISSUER}'
+              path: $.issuer
+            - lld_macro: '{#SELF}'
+              path: $.self
+            - lld_macro: '{#SUBJECT}'
+              path: $.subject
+            - lld_macro: '{#THUMB}'
+              path: $.thumb
+      tags:
+        - tag: service
+          value: MON-CERT
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.CERT.DAYS.AVERAGE}'
+          value: '14'
+        - macro: '{$INT.CERT.DAYS.HIGH}'
+          value: '3'
+        - macro: '{$INT.CERT.DAYS.WARN}'
+          value: '30'
+        - macro: '{$INT.CERT.STORE.FRESH}'
+          value: 3h
+          description: 'Triggers need a value newer than this (a renewed certificate drops out of the list and its problem resolves).'
+        - macro: '{$INT.CERT.STORE.ISSUER.NOT_MATCHES}'
+          value: '(MS-Organization-Access|MS-Organization-P2P-Access|Windows Azure CRP Certificate Generator|Microsoft Intune MDM Device CA|Microsoft Remote Attestation)'
+          description: 'Issuers of auto-managed device certificates (Entra join, Intune, Azure VM agent).'
+        - macro: '{$INT.CERT.STORE.SELF.MATCHES}'
+          value: '^0$'
+          description: '^0$ = ignore self-signed (RDP auto certificate, WinRM). ^[01]$ = include them.'
+        - macro: '{$INT.CERT.STORE.SUBJECT.MATCHES}'
+          value: '.*'
+        - macro: '{$INT.CERT.STORE.SUBJECT.NOT_MATCHES}'
+          value: CHANGE_IF_NEEDED
+    - uuid: cc5b35918b2d4f03a30b993d75614a7e
+      template: 'INT MON-CERT AD CS'
+      name: 'INT MON-CERT AD CS'
+      description: |
+        Integrit MON-CERT: AD CS certification authority certificate (agent 2 active on the CA server, PowerShell).
+        CRL freshness is checked from the site proxy by 'INT MON-CERT Endpoints' ({$INT.CERT.CRL.URLS}), CertSvc by the
+        MON-SRV critical service list.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-CERT
+      items:
+        - uuid: 2735eae0158749b4be9beaa3d50df45e
+          name: 'CA certificate raw'
+          type: ZABBIX_ACTIVE
+          key: int.cert.ca
+          delay: 6h
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 30s
+          tags:
+            - tag: component
+              value: raw
+        - uuid: a94d58143cb84841af26ae3a9b964c2e
+          name: 'CA name'
+          type: DEPENDENT
+          key: 'int.cert.ca.name'
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.ca'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.cert.ca'
+          tags:
+            - tag: component
+              value: ca
+        - uuid: 80486ab8749d44eeb656c56b8e91ea54
+          name: 'CA certificate days left'
+          type: DEPENDENT
+          key: 'int.cert.ca.days'
+          delay: '0'
+          units: d
+          description: '-9999 = CA certificate not found.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.days'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.cert.ca'
+          tags:
+            - tag: component
+              value: ca
+          triggers:
+            - uuid: d5a0202d6ffb4cdaa7965fd7baaeab22
+              expression: 'last(/INT MON-CERT AD CS/int.cert.ca.days)<{$INT.CERT.CA.DAYS.HIGH}'
+              name: 'INT: CA certificate of {HOST.NAME} expires in {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'After expiry no certificate issued by this CA is valid. CA renewal takes planning (new key, publish to AD, clients).'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: 278c8ad70ec34dd8acb385f7637c5eee
+              expression: 'last(/INT MON-CERT AD CS/int.cert.ca.days)<{$INT.CERT.CA.DAYS.WARN}'
+              name: 'INT: CA certificate of {HOST.NAME} expires in {ITEM.LASTVALUE1} (< {$INT.CERT.CA.DAYS.WARN} d)'
+              priority: AVERAGE
+              description: 'Plan the CA renewal now; issued certificates cannot outlive the CA certificate.'
+              dependencies:
+                - name: 'INT: CA certificate of {HOST.NAME} expires in {ITEM.LASTVALUE1}'
+                  expression: 'last(/INT MON-CERT AD CS/int.cert.ca.days)<{$INT.CERT.CA.DAYS.HIGH}'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: 78fea046248543c7aa841fb86d9587d3
+              expression: 'nodata(/INT MON-CERT AD CS/int.cert.ca.days,{$INT.CERT.CA.NODATA})=1'
+              name: 'INT: CA certificate status not received'
+              priority: WARNING
+              description: 'int_mon_cert.ps1 -Mode ca fails or the UserParameter file is missing.'
+              tags:
+                - tag: scope
+                  value: monitoring
+      tags:
+        - tag: service
+          value: MON-CERT
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.CERT.CA.DAYS.HIGH}'
+          value: '30'
+        - macro: '{$INT.CERT.CA.DAYS.WARN}'
+          value: '180'
+        - macro: '{$INT.CERT.CA.NODATA}'
+          value: 25h

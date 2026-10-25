@@ -1,0 +1,178 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: cc26f0d61c124699854bad36edecd192
+      name: Templates/Integrit/MON-HW
+  templates:
+    - uuid: 2aad3f3337024f1ab005636269754e42
+      template: 'INT MON-HW Dell iDRAC'
+      name: 'INT MON-HW Dell iDRAC'
+      description: |
+        Integrit MON-HW wrapper for Dell PowerEdge iDRAC 7/8/9 (SNMPv3, site proxy). Links the official 'Dell iDRAC by SNMP'
+        (all generations: health, disks, controllers, batteries, fans, temperatures, memory, CPU, NICs).
+        Severity alignment with draft 5.6.1 without duplicate problems: the official virtual disk and PSU triggers are switched off by
+        macro and replaced: virtual disk failed DISASTER / degraded HIGH, power supply critical HIGH.
+        BMC unreachable stays the official WARNING (Integrit internal; the server itself may still run).
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'Dell iDRAC by SNMP'
+      groups:
+        - name: Templates/Integrit/MON-HW
+      discovery_rules:
+        - uuid: 1f8f2ca73f2b4fce83d5513015832fa8
+          name: 'INT: Power supplies'
+          type: DEPENDENT
+          key: int.dell.psu.discovery
+          delay: '0'
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: 7762c659062f405994182f0b855535d7
+              name: 'INT: Power supply [{#PSU_DESCR}]: Status'
+              type: DEPENDENT
+              key: 'int.dell.psu.status[{#SNMPINDEX}]'
+              delay: '0'
+              valuemap:
+                name: 'INT Dell object status'
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.4.1.674.10892.5.4.600.12.1.5.{#SNMPINDEX}'
+                    - '0'
+              master_item:
+                key: dell.server.psu.walk
+              tags:
+                - tag: component
+                  value: psu
+              trigger_prototypes:
+                - uuid: 566b2cbb253742478f3e7ac6052f7f27
+                  expression: 'last(/INT MON-HW Dell iDRAC/int.dell.psu.status[{#SNMPINDEX}])=5 or last(/INT MON-HW Dell iDRAC/int.dell.psu.status[{#SNMPINDEX}])=6'
+                  name: 'INT: Dell power supply [{#PSU_DESCR}] failed'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'PSU failed or lost input: the server runs without power redundancy (or is about to lose power).'
+                  tags:
+                    - tag: scope
+                      value: availability
+          master_item:
+            key: dell.server.psu.walk
+          preprocessing:
+            - type: SNMP_WALK_TO_JSON
+              parameters:
+                - '{#PSU_DESCR}'
+                - 1.3.6.1.4.1.674.10892.5.4.600.12.1.8
+                - '0'
+        - uuid: 29f0e7ec1e724216bff6d3153c107d0a
+          name: 'INT: Virtual disks'
+          type: DEPENDENT
+          key: int.dell.vdisk.discovery
+          delay: '0'
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: 646e59417300443b88738edfb80bc79f
+              name: 'INT: Virtual disk [{#DISK_NAME}]: State'
+              type: DEPENDENT
+              key: 'int.dell.vdisk.state[{#SNMPINDEX}]'
+              delay: '0'
+              valuemap:
+                name: 'INT Dell virtual disk state'
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.4.1.674.10892.5.5.1.20.140.1.1.4.{#SNMPINDEX}'
+                    - '0'
+              master_item:
+                key: dell.server.disk.virtual.walk
+              tags:
+                - tag: component
+                  value: raid
+              trigger_prototypes:
+                - uuid: 3b94d308e1f74bada9c1a5bcf063d863
+                  expression: 'last(/INT MON-HW Dell iDRAC/int.dell.vdisk.state[{#SNMPINDEX}])=3'
+                  name: 'INT: Dell virtual disk [{#DISK_NAME}] failed'
+                  priority: DISASTER
+                  description: 'RAID volume failed: data on it is lost or unavailable. Restore from backup may be needed.'
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: 5c4e581c05a04504942e50d6b5dfb61f
+                  expression: 'last(/INT MON-HW Dell iDRAC/int.dell.vdisk.state[{#SNMPINDEX}])=4'
+                  name: 'INT: Dell virtual disk [{#DISK_NAME}] degraded'
+                  priority: HIGH
+                  description: 'RAID volume lost redundancy. Replace the failed disk now; one more failure means data loss.'
+                  tags:
+                    - tag: scope
+                      value: availability
+          master_item:
+            key: dell.server.disk.virtual.walk
+          preprocessing:
+            - type: SNMP_WALK_TO_JSON
+              parameters:
+                - '{#DISK_NAME}'
+                - 1.3.6.1.4.1.674.10892.5.5.1.20.140.1.1.2
+                - '0'
+      tags:
+        - tag: service
+          value: MON-HW
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$DELL.SNMP.PSU.STATUS.CRIT:"critical"}'
+          value: '99'
+          description: 'Switches off the official PSU AVERAGE trigger (replaced by INT HIGH).'
+        - macro: '{$DELL.SNMP.PSU.STATUS.CRIT:"nonRecoverable"}'
+          value: '99'
+          description: 'Switches off the official PSU AVERAGE trigger (replaced by INT HIGH).'
+        - macro: '{$DELL.SNMP.VDISK.STATUS.CRIT:"failed"}'
+          value: '99'
+          description: 'Switches off the official virtual disk HIGH trigger (replaced by INT DISASTER).'
+        - macro: '{$DELL.SNMP.VDISK.STATUS.WARN:"degraded"}'
+          value: '99'
+          description: 'Switches off the official virtual disk WARNING trigger (replaced by INT HIGH).'
+      valuemaps:
+        - uuid: 8db4346288eb4ad6b182f46c328dad44
+          name: 'INT Dell object status'
+          mappings:
+            - value: '1'
+              newvalue: Other
+            - value: '2'
+              newvalue: Unknown
+            - value: '3'
+              newvalue: OK
+            - value: '4'
+              newvalue: 'Non-critical'
+            - value: '5'
+              newvalue: Critical
+            - value: '6'
+              newvalue: 'Non-recoverable'
+        - uuid: 6ac36ad8ebfc436c92eec9989a3caa88
+          name: 'INT Dell virtual disk state'
+          mappings:
+            - value: '1'
+              newvalue: Unknown
+            - value: '2'
+              newvalue: Online
+            - value: '3'
+              newvalue: Failed
+            - value: '4'
+              newvalue: Degraded
+    - uuid: cafa9da0c9b54529a49d7ca9d28d4982
+      template: 'INT MON-HW HPE iLO'
+      name: 'INT MON-HW HPE iLO'
+      description: |
+        Integrit MON-HW wrapper for HPE ProLiant iLO 4/5/6 (Redfish over HTTPS, site proxy). Links the official 'HPE iLO by HTTP'
+        (system, controllers, drives, volumes, PSUs, fans, temperature sensors, iLO manager). Official severities match draft 5.6.1
+        closely (critical HIGH, warning WARNING); a failed RAID volume is HIGH here, not DISASTER. iLO API errors are HIGH.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'HPE iLO by HTTP'
+      groups:
+        - name: Templates/Integrit/MON-HW
+      tags:
+        - tag: service
+          value: MON-HW
+        - tag: version
+          value: '1.0'

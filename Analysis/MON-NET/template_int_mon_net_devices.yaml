@@ -1,0 +1,259 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 20f5bbc4f701485889c80e2fa50d4e68
+      name: Templates/Integrit/MON-NET
+  templates:
+    - uuid: 3fb131a262a3491a88e54e34b335ca0c
+      template: 'INT MON-NET MikroTik'
+      name: 'INT MON-NET MikroTik'
+      description: |
+        Integrit MON-NET wrapper for MikroTik RouterOS routers/firewalls (SNMP, site proxy).
+        Links the official generic 'Mikrotik by SNMP' (the per-model MikroTik templates add nothing for alerting).
+        Adds DISASTER for the site gateway ({$INT.SITE.GATEWAY}=1) and interface utilisation against contracted
+        WAN speed is handled in INT MON-NET WAN. Official HIGH "Unavailable by ICMP ping" stays.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'Mikrotik by SNMP'
+      groups:
+        - name: Templates/Integrit/MON-NET
+      tags:
+        - tag: service
+          value: MON-NET
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.SITE.GATEWAY}'
+          value: '0'
+          description: 'Set 1 on the main gateway of a site: unreachable becomes DISASTER (root of the site dependency tree).'
+        - macro: '{$NET.IF.IFNAME.NOT_MATCHES}'
+          value: '(^Software Loopback Interface|^NULL[0-9.]*$|^[Ll]o[0-9.]*$|^[Ss]ystem$|^Nu[0-9.]*$|^veth[0-9a-z]+$|docker[0-9]+|br-[a-z0-9]{12}|^<pptp-|^<l2tp-|^<sstp-|^<ovpn-)'
+          description: 'Official default plus dynamic VPN client interfaces (<pptp-user>, <l2tp-...>, <sstp-...>, <ovpn-...>), which would raise "Link down" on every disconnect.'
+    - uuid: 8e9040034fb847c89be4cefe699abdad
+      template: 'INT MON-NET FortiGate'
+      name: 'INT MON-NET FortiGate'
+      description: |
+        Integrit MON-NET wrapper for Fortinet FortiGate (SNMP, site proxy). Links the official 'FortiGate by SNMP'
+        (HA members, IPsec tunnels, SD-WAN health checks, resources, interfaces).
+        Adds: DISASTER for the site gateway, HIGH when an HA cluster has fewer members than {$INT.FGT.HA.MEMBERS.MIN}
+        or a member is out of sync, WARNING when a FortiGuard / FortiCare licence expires within {$INT.FGT.LICENSE.EXPIRY.WARN} days
+        (REST API, read-only token in {$FGATE.API.TOKEN}).
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'FortiGate by SNMP'
+      groups:
+        - name: Templates/Integrit/MON-NET
+      items:
+        - uuid: 0c323ad27e0048d88c9761e7cf68815d
+          name: 'INT: HA members'
+          type: DEPENDENT
+          key: int.fgt.ha.members
+          delay: '0'
+          description: 'Number of rows in fgHaStatsTable (0 on standalone units).'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var n = 0;
+                  value.split('\n').forEach(function (line) {
+                      if (/^\.?1\.3\.6\.1\.4\.1\.12356\.101\.13\.2\.1\.1\.2\.\d+\s*=/.test(line)) {
+                          n++;
+                      }
+                  });
+                  return n;
+          master_item:
+            key: ha.members.walk
+          tags:
+            - tag: component
+              value: ha
+        - uuid: ae0b2c4f67424886bd0883b5f84be22b
+          name: 'INT: HA members out of sync'
+          type: DEPENDENT
+          key: int.fgt.ha.unsynced
+          delay: '0'
+          description: 'Members with fgHaStatsSyncStatus = 0 (unsynchronized).'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var n = 0;
+                  value.split('\n').forEach(function (line) {
+                      if (/^\.?1\.3\.6\.1\.4\.1\.12356\.101\.13\.2\.1\.1\.12\.\d+\s*=\s*(INTEGER:\s*)?0\s*$/.test(line)) {
+                          n++;
+                      }
+                  });
+                  return n;
+          master_item:
+            key: ha.members.walk
+          tags:
+            - tag: component
+              value: ha
+          triggers:
+            - uuid: bf6f302c890d488d89c3e9cff605abdc
+              expression: 'min(/INT MON-NET FortiGate/int.fgt.ha.unsynced,15m)>0'
+              name: 'INT: FortiGate HA member out of sync for 15 min'
+              opdata: 'Unsynced members: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'Configuration differs between cluster members; a failover would run with a different configuration.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 35380dfedfda498da54147a07148f213
+          name: 'INT: Licences: Get data'
+          type: HTTP_AGENT
+          key: int.fgt.license.get
+          delay: 6h
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 15s
+          url: 'https://{HOST.CONN}:{$FGATE.API.PORT}/api/v2/monitor/license/status'
+          headers:
+            - name: Authorization
+              value: 'Bearer {$FGATE.API.TOKEN}'
+          description: 'FortiOS REST API licence status. Token of a REST API admin with a read-only profile.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.results
+          tags:
+            - tag: component
+              value: raw
+      discovery_rules:
+        - uuid: f4dc93b165564ae69feab33d4c72a499
+          name: 'INT: FortiGate licence discovery'
+          type: DEPENDENT
+          key: int.fgt.license.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#STATUS}'
+                value: '{$INT.FGT.LICENSE.STATUS.MATCHES}'
+                formulaid: A
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Licensed services with an expiry date (FortiCare, AntiVirus, IPS, Web Filtering, ...).'
+          item_prototypes:
+            - uuid: dc4ca1f830ba4a0799baae7fc9cf5c49
+              name: 'INT: Licence [{#KEY}]: Expires'
+              type: DEPENDENT
+              key: 'int.fgt.license.expires["{#KEY}"]'
+              delay: '0'
+              units: unixtime
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$["{#KEY}"].expires'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: int.fgt.license.get
+              tags:
+                - tag: component
+                  value: license
+              trigger_prototypes:
+                - uuid: eafa0bb5e0df44b6bc6a67aa7f11b5cf
+                  expression: 'last(/INT MON-NET FortiGate/int.fgt.license.expires["{#KEY}"])>0 and (last(/INT MON-NET FortiGate/int.fgt.license.expires["{#KEY}"])-now())/86400<{$INT.FGT.LICENSE.EXPIRY.WARN:"{#KEY}"}'
+                  name: 'INT: FortiGate licence {#KEY} expires in less than {$INT.FGT.LICENSE.EXPIRY.WARN:"{#KEY}"} days'
+                  opdata: 'Expires: {ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  description: 'Security updates (signatures, filtering) or support stop at expiry. Ignore a service with {$INT.FGT.LICENSE.EXPIRY.WARN:"<key>"}=-1.'
+                  tags:
+                    - tag: scope
+                      value: security
+          master_item:
+            key: int.fgt.license.get
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var r = JSON.parse(value), out = [];
+                  Object.keys(r).forEach(function (k) {
+                      if (r[k] && typeof r[k] === 'object' && typeof r[k].expires === 'number' && r[k].expires > 0) {
+                          out.push({'{#KEY}': k, '{#STATUS}': String(r[k].status || '')});
+                      }
+                  });
+                  return JSON.stringify(out);
+      tags:
+        - tag: service
+          value: MON-NET
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$FGATE.API.PORT}'
+          value: '443'
+          description: 'HTTPS admin port of the FortiGate (used only for the licence check).'
+        - macro: '{$FGATE.API.TOKEN}'
+          type: SECRET_TEXT
+          description: 'REST API admin token (read-only admin profile, trusted host = site proxy IP).'
+        - macro: '{$INT.FGT.HA.MEMBERS.MIN}'
+          value: '2'
+          description: 'Expected cluster members when HA mode is not standalone.'
+        - macro: '{$INT.FGT.LICENSE.EXPIRY.WARN}'
+          value: '30'
+        - macro: '{$INT.FGT.LICENSE.STATUS.MATCHES}'
+          value: '^(licensed|registered|valid)$'
+          description: 'Only services that are actually licensed are watched.'
+        - macro: '{$INT.SITE.GATEWAY}'
+          value: '0'
+          description: 'Set 1 on the main gateway of a site: unreachable becomes DISASTER.'
+    - uuid: 9fffd82600454c8a845e0f09db5ee243
+      template: 'INT MON-NET Generic SNMP'
+      name: 'INT MON-NET Generic SNMP'
+      description: |
+        Integrit MON-NET wrapper for gateways without a vendor template in Zabbix 7.0 (Ubiquiti UniFi gateways UDM/UXG/USG,
+        Sophos, Zyxel, DrayTek, ...): reachability, interfaces, errors via the official 'Network Generic Device by SNMP'.
+        Adds DISASTER for the site gateway ({$INT.SITE.GATEWAY}=1).
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'Network Generic Device by SNMP'
+      groups:
+        - name: Templates/Integrit/MON-NET
+      tags:
+        - tag: service
+          value: MON-NET
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.SITE.GATEWAY}'
+          value: '0'
+          description: 'Set 1 on the main gateway of a site: unreachable becomes DISASTER.'
+  triggers:
+    - uuid: c4a692d064d441b7bee4e96061622ca5
+      expression: 'max(/INT MON-NET MikroTik/icmpping,#3)=0 and {$INT.SITE.GATEWAY}=1'
+      name: 'INT: Site gateway is unreachable'
+      priority: DISASTER
+      description: 'Main gateway of the site does not answer ping from the site proxy. Everything behind it is suppressed by host dependencies.'
+      tags:
+        - tag: scope
+          value: availability
+    - uuid: d38c524edc004bcb9a0faf46e9c1e441
+      expression: 'max(/INT MON-NET FortiGate/icmpping,#3)=0 and {$INT.SITE.GATEWAY}=1'
+      name: 'INT: Site gateway is unreachable'
+      priority: DISASTER
+      description: 'Main gateway of the site does not answer ping from the site proxy. Everything behind it is suppressed by host dependencies.'
+      tags:
+        - tag: scope
+          value: availability
+    - uuid: e86224fd2ea54640b9bed4118ba73ed7
+      expression: 'max(/INT MON-NET Generic SNMP/icmpping,#3)=0 and {$INT.SITE.GATEWAY}=1'
+      name: 'INT: Site gateway is unreachable'
+      priority: DISASTER
+      description: 'Main gateway of the site does not answer ping from the site proxy. Everything behind it is suppressed by host dependencies.'
+      tags:
+        - tag: scope
+          value: availability
+    - uuid: 10da6c922b0740d5b405be8198a31784
+      expression: 'last(/INT MON-NET FortiGate/ha.mode[fgHaSystemMode.0])<>1 and min(/INT MON-NET FortiGate/int.fgt.ha.members,15m)<{$INT.FGT.HA.MEMBERS.MIN}'
+      name: 'INT: FortiGate HA cluster is degraded'
+      opdata: 'Members: {ITEM.LASTVALUE2}'
+      priority: HIGH
+      description: 'HA is configured but fewer than {$INT.FGT.HA.MEMBERS.MIN} members are present. No failover protection.'
+      tags:
+        - tag: scope
+          value: availability

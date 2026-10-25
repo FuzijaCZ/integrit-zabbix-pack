@@ -1,0 +1,544 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 289a597e28be400da3c3039f35facc80
+      name: Templates/Integrit/MON-ENV
+  templates:
+    - uuid: 56acb4a21d064afb96cb3f0987d09a3e
+      template: 'INT MON-ENV SNMP sensors'
+      name: 'INT MON-ENV SNMP sensors'
+      description: |
+        Integrit MON-ENV: server room / rack environment from any SNMP sensor unit (HW group, Comet, Papouch, AKCP, ...), site proxy.
+        Sensors are listed in host macros (label|OID|multiplier or label|OID|alarm value); no vendor MIB needed.
+        Temperature, rise rate, humidity, flood, smoke (informative, not a fire alarm), door, mains power, unit availability.
+        Thresholds use macro context per sensor label, e.g. {$INT.ENV.TEMP.WARN:"Room"}=30.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-ENV
+      items:
+        - uuid: 71853f9837d0492fb67255387df84dd2
+          name: 'Sensor unit: SNMP availability'
+          type: INTERNAL
+          key: 'zabbix[host,snmp,available]'
+          history: 7d
+          description: '0 not available, 1 available, 2 unknown.'
+          valuemap:
+            name: 'INT ENV availability'
+          tags:
+            - tag: component
+              value: unit
+          triggers:
+            - uuid: 63b34e2834514acf941b3f76a7807d3e
+              expression: 'max(/INT MON-ENV SNMP sensors/zabbix[host,snmp,available],{$INT.ENV.UNIT.DOWN.TIME})=0'
+              name: 'INT: Sensor unit {HOST.NAME} is not responding to SNMP'
+              priority: AVERAGE
+              description: 'Unit offline (power, network, PoE) or SNMP community changed. Room conditions are unknown. Depends on the site gateway (host-level dependency, MON-NET).'
+              tags:
+                - tag: scope
+                  value: availability
+      discovery_rules:
+        - uuid: f30e9ff786fa42fa8a10df89af4dc09f
+          name: 'Temperature sensors from {$INT.ENV.TEMP.SENSORS}'
+          type: SCRIPT
+          key: 'int.env.discovery[temp]'
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), names = String(p.fields).split(','), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.replace(/\\\|/g, '\u0001').split('|').map(function (x) { return x.replace(/\u0001/g, '|'); }), row = {};
+                if (f.length !== names.length) {
+                    throw 'Entry "' + entry + '" needs ' + names.length + ' fields separated by |: ' + p.fields;
+                }
+                names.forEach(function (n, i) { row[n.trim()] = f[i].trim(); });
+                out.push(row);
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: fields
+              value: '{#LABEL},{#OID},{#MULT}'
+            - name: list
+              value: '{$INT.ENV.TEMP.SENSORS}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Entries label|OID|multiplier separated by ; (e.g. Rack inlet|1.3.6.1.4.1.21796.4.9.3.1.5.1|0.1).'
+          item_prototypes:
+            - uuid: d4990d389cb1456383aeacae96da92b9
+              name: 'Temperature {#LABEL}'
+              type: SNMP_AGENT
+              snmp_oid: '{#OID}'
+              key: 'int.env.temp["{#LABEL}"]'
+              delay: '{$INT.ENV.INTERVAL}'
+              value_type: FLOAT
+              units: '°C'
+              preprocessing:
+                - type: MULTIPLIER
+                  parameters:
+                    - '{#MULT}'
+              tags:
+                - tag: component
+                  value: temperature
+                - tag: sensor
+                  value: '{#LABEL}'
+          trigger_prototypes:
+            - uuid: 5f6e506d098e4b3dae0570d88b96a81b
+              expression: 'min(/INT MON-ENV SNMP sensors/int.env.temp["{#LABEL}"],#2)>{$INT.ENV.TEMP.EXTREME:"{#LABEL}"}'
+              name: 'INT: Extreme temperature at {#LABEL}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: DISASTER
+              description: 'Hardware damage within minutes. Shut down non-critical servers (SRV-SHUTDOWN plan) and get the room cooled.'
+              tags:
+                - tag: scope
+                  value: environment
+            - uuid: 910532d96769479e8fb58ef3be04b2cb
+              expression: 'min(/INT MON-ENV SNMP sensors/int.env.temp["{#LABEL}"],{$INT.ENV.TEMP.CRIT.TIME:"{#LABEL}"})>{$INT.ENV.TEMP.CRIT:"{#LABEL}"}'
+              name: 'INT: Critical temperature at {#LABEL}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'Cooling has failed or is overloaded. Call the HVAC service contact.'
+              dependencies:
+                - name: 'INT: Extreme temperature at {#LABEL}'
+                  expression: 'min(/INT MON-ENV SNMP sensors/int.env.temp["{#LABEL}"],#2)>{$INT.ENV.TEMP.EXTREME:"{#LABEL}"}'
+              tags:
+                - tag: scope
+                  value: environment
+            - uuid: 92a0efb10def41d4b26e940545d10152
+              expression: 'min(/INT MON-ENV SNMP sensors/int.env.temp["{#LABEL}"],{$INT.ENV.TEMP.WARN.TIME:"{#LABEL}"})>{$INT.ENV.TEMP.WARN:"{#LABEL}"}'
+              name: 'INT: High temperature at {#LABEL}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Above the ASHRAE A1 recommended inlet range.'
+              dependencies:
+                - name: 'INT: Critical temperature at {#LABEL}'
+                  expression: 'min(/INT MON-ENV SNMP sensors/int.env.temp["{#LABEL}"],{$INT.ENV.TEMP.CRIT.TIME:"{#LABEL}"})>{$INT.ENV.TEMP.CRIT:"{#LABEL}"}'
+              tags:
+                - tag: scope
+                  value: environment
+            - uuid: 7ad4d498938045c0980918e0784b257e
+              expression: 'last(/INT MON-ENV SNMP sensors/int.env.temp["{#LABEL}"])-min(/INT MON-ENV SNMP sensors/int.env.temp["{#LABEL}"],{$INT.ENV.TEMP.RISE.TIME:"{#LABEL}"})>{$INT.ENV.TEMP.RISE:"{#LABEL}"}'
+              name: 'INT: Temperature at {#LABEL} rising fast (cooling failure?)'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'Rise of more than {$INT.ENV.TEMP.RISE} °C within {$INT.ENV.TEMP.RISE.TIME}. Expected during a power outage when HVAC is not on UPS, still act.'
+              dependencies:
+                - name: 'INT: Critical temperature at {#LABEL}'
+                  expression: 'min(/INT MON-ENV SNMP sensors/int.env.temp["{#LABEL}"],{$INT.ENV.TEMP.CRIT.TIME:"{#LABEL}"})>{$INT.ENV.TEMP.CRIT:"{#LABEL}"}'
+              tags:
+                - tag: scope
+                  value: environment
+            - uuid: 0d59842b35ff4b0e8664d7c50e17b7d4
+              expression: 'nodata(/INT MON-ENV SNMP sensors/int.env.temp["{#LABEL}"],{$INT.ENV.NODATA})=1'
+              name: 'INT: Sensor {#LABEL} sends no data'
+              priority: AVERAGE
+              description: 'Sensor disconnected, broken or the OID is wrong.'
+              dependencies:
+                - name: 'INT: Sensor unit {HOST.NAME} is not responding to SNMP'
+                  expression: 'max(/INT MON-ENV SNMP sensors/zabbix[host,snmp,available],{$INT.ENV.UNIT.DOWN.TIME})=0'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: d2a3ddd5937a4c749ffb09f1c93786e6
+          name: 'Humidity sensors from {$INT.ENV.HUM.SENSORS}'
+          type: SCRIPT
+          key: 'int.env.discovery[hum]'
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), names = String(p.fields).split(','), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.replace(/\\\|/g, '\u0001').split('|').map(function (x) { return x.replace(/\u0001/g, '|'); }), row = {};
+                if (f.length !== names.length) {
+                    throw 'Entry "' + entry + '" needs ' + names.length + ' fields separated by |: ' + p.fields;
+                }
+                names.forEach(function (n, i) { row[n.trim()] = f[i].trim(); });
+                out.push(row);
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: fields
+              value: '{#LABEL},{#OID},{#MULT}'
+            - name: list
+              value: '{$INT.ENV.HUM.SENSORS}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Entries label|OID|multiplier separated by ;.'
+          item_prototypes:
+            - uuid: bfb7bd61cbae4b28a15d8584533a8c9b
+              name: 'Humidity {#LABEL}'
+              type: SNMP_AGENT
+              snmp_oid: '{#OID}'
+              key: 'int.env.hum["{#LABEL}"]'
+              delay: '{$INT.ENV.INTERVAL}'
+              value_type: FLOAT
+              units: '%'
+              preprocessing:
+                - type: MULTIPLIER
+                  parameters:
+                    - '{#MULT}'
+              tags:
+                - tag: component
+                  value: humidity
+                - tag: sensor
+                  value: '{#LABEL}'
+          trigger_prototypes:
+            - uuid: 9c948362805847b3b011a3908541dab2
+              expression: 'min(/INT MON-ENV SNMP sensors/int.env.hum["{#LABEL}"],{$INT.ENV.HUM.TIME:"{#LABEL}"})>{$INT.ENV.HUM.MAX:"{#LABEL}"} or max(/INT MON-ENV SNMP sensors/int.env.hum["{#LABEL}"],{$INT.ENV.HUM.TIME:"{#LABEL}"})<{$INT.ENV.HUM.MIN:"{#LABEL}"}'
+              name: 'INT: Humidity at {#LABEL} out of range'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Outside {$INT.ENV.HUM.MIN}-{$INT.ENV.HUM.MAX} %RH: condensation (high) or static discharge (low).'
+              tags:
+                - tag: scope
+                  value: environment
+            - uuid: 80c9bcf649ea40dc9adb38f034a0f256
+              expression: 'nodata(/INT MON-ENV SNMP sensors/int.env.hum["{#LABEL}"],{$INT.ENV.NODATA})=1'
+              name: 'INT: Sensor {#LABEL} sends no data'
+              priority: AVERAGE
+              description: 'Sensor disconnected, broken or the OID is wrong.'
+              dependencies:
+                - name: 'INT: Sensor unit {HOST.NAME} is not responding to SNMP'
+                  expression: 'max(/INT MON-ENV SNMP sensors/zabbix[host,snmp,available],{$INT.ENV.UNIT.DOWN.TIME})=0'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 40d0593f553042f6b0597a4d2fc19cb1
+          name: 'Flood sensors from {$INT.ENV.FLOOD.SENSORS}'
+          type: SCRIPT
+          key: 'int.env.discovery[flood]'
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), names = String(p.fields).split(','), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.replace(/\\\|/g, '\u0001').split('|').map(function (x) { return x.replace(/\u0001/g, '|'); }), row = {};
+                if (f.length !== names.length) {
+                    throw 'Entry "' + entry + '" needs ' + names.length + ' fields separated by |: ' + p.fields;
+                }
+                names.forEach(function (n, i) { row[n.trim()] = f[i].trim(); });
+                out.push(row);
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: fields
+              value: '{#LABEL},{#OID},{#ALARM}'
+            - name: list
+              value: '{$INT.ENV.FLOOD.SENSORS}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Entries label|OID|alarm-value-regex separated by ; (1 = alarm after preprocessing).'
+          item_prototypes:
+            - uuid: 837eb433aead4ae4af6a742b3d51fec7
+              name: 'Flood {#LABEL}'
+              type: SNMP_AGENT
+              snmp_oid: '{#OID}'
+              key: 'int.env.flood["{#LABEL}"]'
+              delay: '{$INT.ENV.INTERVAL}'
+              valuemap:
+                name: 'INT ENV alarm'
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - 'return new RegExp(''^(?:{#ALARM})$'').test(String(value).trim()) ? 1 : 0;'
+              tags:
+                - tag: component
+                  value: flood
+                - tag: sensor
+                  value: '{#LABEL}'
+          trigger_prototypes:
+            - uuid: dc2224bab1a444168deb56c530153650
+              expression: 'last(/INT MON-ENV SNMP sensors/int.env.flood["{#LABEL}"])=1'
+              name: 'INT: Water detected at {#LABEL}'
+              priority: DISASTER
+              description: 'Leak under the HVAC unit / raised floor. Go on site immediately.'
+              tags:
+                - tag: scope
+                  value: environment
+            - uuid: 5bced4c4d7b54b01b4dfd2eba1f3e0ff
+              expression: 'nodata(/INT MON-ENV SNMP sensors/int.env.flood["{#LABEL}"],{$INT.ENV.NODATA})=1'
+              name: 'INT: Sensor {#LABEL} sends no data'
+              priority: AVERAGE
+              description: 'Sensor disconnected, broken or the OID is wrong.'
+              dependencies:
+                - name: 'INT: Sensor unit {HOST.NAME} is not responding to SNMP'
+                  expression: 'max(/INT MON-ENV SNMP sensors/zabbix[host,snmp,available],{$INT.ENV.UNIT.DOWN.TIME})=0'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: dba131c7530e4e00b04471665331172e
+          name: 'Smoke sensors from {$INT.ENV.SMOKE.SENSORS}'
+          type: SCRIPT
+          key: 'int.env.discovery[smoke]'
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), names = String(p.fields).split(','), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.replace(/\\\|/g, '\u0001').split('|').map(function (x) { return x.replace(/\u0001/g, '|'); }), row = {};
+                if (f.length !== names.length) {
+                    throw 'Entry "' + entry + '" needs ' + names.length + ' fields separated by |: ' + p.fields;
+                }
+                names.forEach(function (n, i) { row[n.trim()] = f[i].trim(); });
+                out.push(row);
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: fields
+              value: '{#LABEL},{#OID},{#ALARM}'
+            - name: list
+              value: '{$INT.ENV.SMOKE.SENSORS}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Entries label|OID|alarm-value-regex separated by ; (1 = alarm after preprocessing).'
+          item_prototypes:
+            - uuid: df4b2bbfc65849bb979db438e6a1dd33
+              name: 'Smoke {#LABEL}'
+              type: SNMP_AGENT
+              snmp_oid: '{#OID}'
+              key: 'int.env.smoke["{#LABEL}"]'
+              delay: '{$INT.ENV.INTERVAL}'
+              valuemap:
+                name: 'INT ENV alarm'
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - 'return new RegExp(''^(?:{#ALARM})$'').test(String(value).trim()) ? 1 : 0;'
+              tags:
+                - tag: component
+                  value: smoke
+                - tag: sensor
+                  value: '{#LABEL}'
+          trigger_prototypes:
+            - uuid: 118b3521dbcc4a19a034d4ffa231c756
+              expression: 'last(/INT MON-ENV SNMP sensors/int.env.smoke["{#LABEL}"])=1'
+              name: 'INT: Smoke detected at {#LABEL}'
+              priority: DISASTER
+              description: 'Informative only: this is NOT a certified fire alarm system (EPS). Call the customer contact at once.'
+              tags:
+                - tag: scope
+                  value: environment
+            - uuid: 1cf986f5fb34499cac41de96ddf0f05c
+              expression: 'nodata(/INT MON-ENV SNMP sensors/int.env.smoke["{#LABEL}"],{$INT.ENV.NODATA})=1'
+              name: 'INT: Sensor {#LABEL} sends no data'
+              priority: AVERAGE
+              description: 'Sensor disconnected, broken or the OID is wrong.'
+              dependencies:
+                - name: 'INT: Sensor unit {HOST.NAME} is not responding to SNMP'
+                  expression: 'max(/INT MON-ENV SNMP sensors/zabbix[host,snmp,available],{$INT.ENV.UNIT.DOWN.TIME})=0'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 3b36bd2011c04ff0886bc9f2971ff22a
+          name: 'Door contacts from {$INT.ENV.DOOR.SENSORS}'
+          type: SCRIPT
+          key: 'int.env.discovery[door]'
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), names = String(p.fields).split(','), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.replace(/\\\|/g, '\u0001').split('|').map(function (x) { return x.replace(/\u0001/g, '|'); }), row = {};
+                if (f.length !== names.length) {
+                    throw 'Entry "' + entry + '" needs ' + names.length + ' fields separated by |: ' + p.fields;
+                }
+                names.forEach(function (n, i) { row[n.trim()] = f[i].trim(); });
+                out.push(row);
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: fields
+              value: '{#LABEL},{#OID},{#ALARM}'
+            - name: list
+              value: '{$INT.ENV.DOOR.SENSORS}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Entries label|OID|alarm-value-regex separated by ; (1 = alarm after preprocessing).'
+          item_prototypes:
+            - uuid: 880d49c987fa4a7b9f203cfccac1060a
+              name: 'Door {#LABEL}'
+              type: SNMP_AGENT
+              snmp_oid: '{#OID}'
+              key: 'int.env.door["{#LABEL}"]'
+              delay: '{$INT.ENV.INTERVAL}'
+              valuemap:
+                name: 'INT ENV alarm'
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - 'return new RegExp(''^(?:{#ALARM})$'').test(String(value).trim()) ? 1 : 0;'
+              tags:
+                - tag: component
+                  value: door
+                - tag: sensor
+                  value: '{#LABEL}'
+          trigger_prototypes:
+            - uuid: 5efc33ee8c8040938a7bce2fa5c33ae9
+              expression: 'min(/INT MON-ENV SNMP sensors/int.env.door["{#LABEL}"],{$INT.ENV.DOOR.TIME})=1 and (dayofweek()>5 or time()<{$INT.ENV.WORK.START} or time()>={$INT.ENV.WORK.END})'
+              name: 'INT: Door {#LABEL} open outside working hours'
+              priority: WARNING
+              description: 'Open longer than {$INT.ENV.DOOR.TIME} outside Mon-Fri {$INT.ENV.WORK.START}-{$INT.ENV.WORK.END}.'
+              tags:
+                - tag: scope
+                  value: security
+            - uuid: b31cde7d555f421694ecbb43d1b7ec88
+              expression: 'min(/INT MON-ENV SNMP sensors/int.env.door["{#LABEL}"],{$INT.ENV.DOOR.TIME})=1'
+              name: 'INT: Door {#LABEL} open'
+              priority: INFO
+              description: 'Open longer than {$INT.ENV.DOOR.TIME}.'
+              dependencies:
+                - name: 'INT: Door {#LABEL} open outside working hours'
+                  expression: 'min(/INT MON-ENV SNMP sensors/int.env.door["{#LABEL}"],{$INT.ENV.DOOR.TIME})=1 and (dayofweek()>5 or time()<{$INT.ENV.WORK.START} or time()>={$INT.ENV.WORK.END})'
+              tags:
+                - tag: scope
+                  value: security
+            - uuid: b1eb4f91088448fab96dad5592b7b3f1
+              expression: 'nodata(/INT MON-ENV SNMP sensors/int.env.door["{#LABEL}"],{$INT.ENV.NODATA})=1'
+              name: 'INT: Sensor {#LABEL} sends no data'
+              priority: AVERAGE
+              description: 'Sensor disconnected, broken or the OID is wrong.'
+              dependencies:
+                - name: 'INT: Sensor unit {HOST.NAME} is not responding to SNMP'
+                  expression: 'max(/INT MON-ENV SNMP sensors/zabbix[host,snmp,available],{$INT.ENV.UNIT.DOWN.TIME})=0'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 795f295c55ed489aa27ffd52fa91eaa9
+          name: 'Mains power contacts from {$INT.ENV.POWER.SENSORS}'
+          type: SCRIPT
+          key: 'int.env.discovery[power]'
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), names = String(p.fields).split(','), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.replace(/\\\|/g, '\u0001').split('|').map(function (x) { return x.replace(/\u0001/g, '|'); }), row = {};
+                if (f.length !== names.length) {
+                    throw 'Entry "' + entry + '" needs ' + names.length + ' fields separated by |: ' + p.fields;
+                }
+                names.forEach(function (n, i) { row[n.trim()] = f[i].trim(); });
+                out.push(row);
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: fields
+              value: '{#LABEL},{#OID},{#ALARM}'
+            - name: list
+              value: '{$INT.ENV.POWER.SENSORS}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Entries label|OID|alarm-value-regex separated by ; (1 = alarm after preprocessing).'
+          item_prototypes:
+            - uuid: 040bef1943214a2090b1688784f5086a
+              name: 'Mains power lost {#LABEL}'
+              type: SNMP_AGENT
+              snmp_oid: '{#OID}'
+              key: 'int.env.power["{#LABEL}"]'
+              delay: '{$INT.ENV.INTERVAL}'
+              valuemap:
+                name: 'INT ENV alarm'
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - 'return new RegExp(''^(?:{#ALARM})$'').test(String(value).trim()) ? 1 : 0;'
+              tags:
+                - tag: component
+                  value: power
+                - tag: sensor
+                  value: '{#LABEL}'
+          trigger_prototypes:
+            - uuid: 09af0c6a77e548e6a85f9e495f0643a1
+              expression: 'min(/INT MON-ENV SNMP sensors/int.env.power["{#LABEL}"],#2)=1'
+              name: 'INT: Mains power lost at {#LABEL}'
+              priority: HIGH
+              description: 'Dry contact reports no mains (HVAC usually not on UPS: temperature will rise). Compare with MON-UPS on battery.'
+              tags:
+                - tag: scope
+                  value: environment
+            - uuid: d93a88e514444ccd8b523501d635ce7e
+              expression: 'nodata(/INT MON-ENV SNMP sensors/int.env.power["{#LABEL}"],{$INT.ENV.NODATA})=1'
+              name: 'INT: Sensor {#LABEL} sends no data'
+              priority: AVERAGE
+              description: 'Sensor disconnected, broken or the OID is wrong.'
+              dependencies:
+                - name: 'INT: Sensor unit {HOST.NAME} is not responding to SNMP'
+                  expression: 'max(/INT MON-ENV SNMP sensors/zabbix[host,snmp,available],{$INT.ENV.UNIT.DOWN.TIME})=0'
+              tags:
+                - tag: scope
+                  value: availability
+      tags:
+        - tag: service
+          value: MON-ENV
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.ENV.DOOR.SENSORS}'
+          description: 'label|OID|alarm-value-regex;... (open = alarm). Empty = none.'
+        - macro: '{$INT.ENV.DOOR.TIME}'
+          value: 15m
+        - macro: '{$INT.ENV.FLOOD.SENSORS}'
+          description: 'label|OID|alarm-value-regex;... Empty = none.'
+        - macro: '{$INT.ENV.HUM.MAX}'
+          value: '70'
+        - macro: '{$INT.ENV.HUM.MIN}'
+          value: '20'
+        - macro: '{$INT.ENV.HUM.SENSORS}'
+          description: 'label|OID|multiplier;... Empty = none.'
+        - macro: '{$INT.ENV.HUM.TIME}'
+          value: 30m
+        - macro: '{$INT.ENV.INTERVAL}'
+          value: 1m
+        - macro: '{$INT.ENV.NODATA}'
+          value: 15m
+        - macro: '{$INT.ENV.POWER.SENSORS}'
+          description: 'label|OID|alarm-value-regex;... (mains lost = alarm). Empty = none.'
+        - macro: '{$INT.ENV.SMOKE.SENSORS}'
+          description: 'label|OID|alarm-value-regex;... Empty = none.'
+        - macro: '{$INT.ENV.TEMP.CRIT}'
+          value: '32'
+        - macro: '{$INT.ENV.TEMP.CRIT.TIME}'
+          value: 5m
+        - macro: '{$INT.ENV.TEMP.EXTREME}'
+          value: '35'
+        - macro: '{$INT.ENV.TEMP.RISE}'
+          value: '3'
+          description: '°C within {$INT.ENV.TEMP.RISE.TIME}.'
+        - macro: '{$INT.ENV.TEMP.RISE.TIME}'
+          value: 15m
+        - macro: '{$INT.ENV.TEMP.SENSORS}'
+          description: 'label|OID|multiplier;... Empty = none.'
+        - macro: '{$INT.ENV.TEMP.WARN}'
+          value: '27'
+          description: 'ASHRAE A1 recommended inlet maximum.'
+        - macro: '{$INT.ENV.TEMP.WARN.TIME}'
+          value: 10m
+        - macro: '{$INT.ENV.UNIT.DOWN.TIME}'
+          value: 5m
+        - macro: '{$INT.ENV.WORK.END}'
+          value: '180000'
+          description: 'hhmmss, door outside working hours = WARNING.'
+        - macro: '{$INT.ENV.WORK.START}'
+          value: '070000'
+      valuemaps:
+        - uuid: f87ca73ad5004226b30818a32490f3a3
+          name: 'INT ENV alarm'
+          mappings:
+            - value: '0'
+              newvalue: OK
+            - value: '1'
+              newvalue: ALARM
+        - uuid: fe1bc557c8654c7e804cb26ebe8fc6ff
+          name: 'INT ENV availability'
+          mappings:
+            - value: '0'
+              newvalue: 'not available'
+            - value: '1'
+              newvalue: available
+            - value: '2'
+              newvalue: unknown

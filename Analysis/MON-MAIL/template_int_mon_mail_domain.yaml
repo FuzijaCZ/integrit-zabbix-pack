@@ -1,0 +1,873 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 638f460ec9ce421499d5f9071e67febd
+      name: Templates/Integrit/MON-MAIL
+  templates:
+    - uuid: 86cde2536c35400fb9e1e1024b4e0150
+      template: 'INT MON-MAIL Basic'
+      name: 'INT MON-MAIL Basic'
+      description: |
+        Integrit MON-MAIL Basic: security and reachability of one mail domain, checked from outside (external proxy, no access
+        to the customer mail system). MX, SMTP banner and STARTTLS certificate, SPF (lookup count), DMARC, DKIM selectors,
+        MTA-STS (report), outbound IPs on DNS blacklists. ExternalScript int-mail-check.py, every {$INT.MAIL.INTERVAL}.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-MAIL
+      items:
+        - uuid: 46ede27eb761491db76a229d61c98931
+          name: 'Mail: Domain check raw'
+          type: EXTERNAL
+          key: 'int-mail-check.py["{$INT.MAIL.DOMAIN}","{$INT.MAIL.DKIM.SELECTORS}","{$INT.MAIL.OUTBOUND.IPS}","{$INT.MAIL.DQS.KEY}"]'
+          delay: '{$INT.MAIL.INTERVAL}'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 120s
+          description: 'JSON from the proxy ExternalScript int-mail-check.py.'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 1685e754378f4a9a90baf658072ebfb3
+          name: 'Mail: Check error'
+          type: DEPENDENT
+          key: int.mail.error
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Empty = the check ran. Text = DNS resolver / dig problem; then no other value is updated.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.error
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int-mail-check.py["{$INT.MAIL.DOMAIN}","{$INT.MAIL.DKIM.SELECTORS}","{$INT.MAIL.OUTBOUND.IPS}","{$INT.MAIL.DQS.KEY}"]'
+          tags:
+            - tag: component
+              value: raw
+          triggers:
+            - uuid: ad9cabc958734bb3aa0dfddb47ad0f0b
+              expression: 'length(last(/INT MON-MAIL Basic/int.mail.error,#1))>0 and length(last(/INT MON-MAIL Basic/int.mail.error,#2))>0'
+              name: 'INT: Mail check for {$INT.MAIL.DOMAIN} fails'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Two checks in a row could not run (dig missing, resolver down, domain gone). See item "Mail: Check error" and the external proxy.'
+              tags:
+                - tag: scope
+                  value: monitoring
+            - uuid: e8b0ce6f50974967ae0637f32ce8e307
+              expression: 'nodata(/INT MON-MAIL Basic/int.mail.error,{$INT.MAIL.NODATA})=1'
+              name: 'INT: Mail check for {$INT.MAIL.DOMAIN} returns no data'
+              priority: AVERAGE
+              description: 'The ExternalScript times out or is missing on the external proxy (see Latest data → item error).'
+              tags:
+                - tag: scope
+                  value: monitoring
+        - uuid: 3b0e61aa7aaa406bb1bee1f1ad413b93
+          name: 'Mail: MX records'
+          type: DEPENDENT
+          key: int.mail.mx.count
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.mx_count
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int-mail-check.py["{$INT.MAIL.DOMAIN}","{$INT.MAIL.DKIM.SELECTORS}","{$INT.MAIL.OUTBOUND.IPS}","{$INT.MAIL.DQS.KEY}"]'
+          tags:
+            - tag: component
+              value: domain
+          triggers:
+            - uuid: a4655158e0da4a52bf8dd3b3134cd052
+              expression: 'last(/INT MON-MAIL Basic/int.mail.mx.count)=0'
+              name: 'INT: Domain {$INT.MAIL.DOMAIN} has no MX record'
+              priority: HIGH
+              description: 'Inbound mail to the domain cannot be delivered.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: d1116d1c844c471dbfb7b25489a7c4b0
+          name: 'Mail: MX answering SMTP'
+          type: DEPENDENT
+          key: int.mail.mx.reachable
+          delay: '0'
+          description: 'Number of the first 3 MX hosts that answered with a 220 banner on TCP 25 from the external proxy.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.mx_reachable
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int-mail-check.py["{$INT.MAIL.DOMAIN}","{$INT.MAIL.DKIM.SELECTORS}","{$INT.MAIL.OUTBOUND.IPS}","{$INT.MAIL.DQS.KEY}"]'
+          tags:
+            - tag: component
+              value: domain
+          triggers:
+            - uuid: 99a4350eb0d044d58a54c0eaafe5d696
+              expression: 'max(/INT MON-MAIL Basic/int.mail.mx.reachable,#2)=0 and last(/INT MON-MAIL Basic/int.mail.mx.count)>0 and {$INT.MAIL.SMTP.CHECK}=1'
+              name: 'INT: No MX of {$INT.MAIL.DOMAIN} answers on port 25'
+              priority: HIGH
+              description: 'Two checks in a row: none of the MX hosts gave an SMTP banner. Inbound mail queues at senders. If the proxy network blocks outbound 25, set {$INT.MAIL.SMTP.CHECK}=0.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 0795b7486b5a4cddba624fa962d0c61d
+          name: 'Mail: STARTTLS certificate days left'
+          type: DEPENDENT
+          key: int.mail.starttls.days
+          delay: '0'
+          units: d
+          description: 'Lowest certificate validity of the MX hosts (days).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.starttls_min_days
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int-mail-check.py["{$INT.MAIL.DOMAIN}","{$INT.MAIL.DKIM.SELECTORS}","{$INT.MAIL.OUTBOUND.IPS}","{$INT.MAIL.DQS.KEY}"]'
+          tags:
+            - tag: component
+              value: domain
+          triggers:
+            - uuid: e8d565a34a944ebcb41577ec0183cb5c
+              expression: '(last(/INT MON-MAIL Basic/int.mail.starttls.days)<0 or min(/INT MON-MAIL Basic/int.mail.starttls.invalid,#2)>0) and {$INT.MAIL.SMTP.CHECK}=1'
+              name: 'INT: STARTTLS certificate of an MX of {$INT.MAIL.DOMAIN} is expired or invalid'
+              priority: HIGH
+              description: 'Expired, untrusted chain or name mismatch. Senders with enforced TLS (MTA-STS, DANE, partner rules) stop delivering. Details in item "Mail: MX details".'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: c7b332554a1f4e6aa12a82d459391a42
+              expression: 'last(/INT MON-MAIL Basic/int.mail.starttls.days)<{$INT.MAIL.CERT.DAYS.WARN} and {$INT.MAIL.SMTP.CHECK}=1'
+              name: 'INT: STARTTLS certificate of an MX of {$INT.MAIL.DOMAIN} expires in {ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              dependencies:
+                - name: 'INT: STARTTLS certificate of an MX of {$INT.MAIL.DOMAIN} is expired or invalid'
+                  expression: '(last(/INT MON-MAIL Basic/int.mail.starttls.days)<0 or min(/INT MON-MAIL Basic/int.mail.starttls.invalid,#2)>0) and {$INT.MAIL.SMTP.CHECK}=1'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 8dd97cf9d1084008aad3f115f98a6856
+          name: 'Mail: MX with invalid certificate'
+          type: DEPENDENT
+          key: int.mail.starttls.invalid
+          delay: '0'
+          description: 'MX hosts whose STARTTLS certificate fails chain or host name validation.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.starttls_invalid
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int-mail-check.py["{$INT.MAIL.DOMAIN}","{$INT.MAIL.DKIM.SELECTORS}","{$INT.MAIL.OUTBOUND.IPS}","{$INT.MAIL.DQS.KEY}"]'
+          tags:
+            - tag: component
+              value: domain
+        - uuid: 13a3cb62561f4b4ea7e6a2ec89e2e722
+          name: 'Mail: MX without STARTTLS'
+          type: DEPENDENT
+          key: int.mail.starttls.missing
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.starttls_missing
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int-mail-check.py["{$INT.MAIL.DOMAIN}","{$INT.MAIL.DKIM.SELECTORS}","{$INT.MAIL.OUTBOUND.IPS}","{$INT.MAIL.DQS.KEY}"]'
+          tags:
+            - tag: component
+              value: domain
+          triggers:
+            - uuid: 3932aa20627b4cdabf079a0d27d910da
+              expression: 'min(/INT MON-MAIL Basic/int.mail.starttls.missing,#2)>0 and {$INT.MAIL.SMTP.CHECK}=1'
+              name: 'INT: An MX of {$INT.MAIL.DOMAIN} does not offer STARTTLS'
+              priority: AVERAGE
+              description: 'Mail to the domain travels unencrypted.'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 30d38f4ba4504f279799e2ff8a702bb4
+          name: 'Mail: MX details'
+          type: DEPENDENT
+          key: int.mail.mx.detail
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Per MX: banner, starttls, cert_valid, cert_days, error.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.mx
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int-mail-check.py["{$INT.MAIL.DOMAIN}","{$INT.MAIL.DKIM.SELECTORS}","{$INT.MAIL.OUTBOUND.IPS}","{$INT.MAIL.DQS.KEY}"]'
+          tags:
+            - tag: component
+              value: domain
+        - uuid: f0737230e85946788b46f5035eadb653
+          name: 'Mail: SPF valid'
+          type: DEPENDENT
+          key: int.mail.spf.ok
+          delay: '0'
+          description: '1 = one SPF record, no errors, max 10 DNS lookups, ends -all or ~all.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.spf_ok
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int-mail-check.py["{$INT.MAIL.DOMAIN}","{$INT.MAIL.DKIM.SELECTORS}","{$INT.MAIL.OUTBOUND.IPS}","{$INT.MAIL.DQS.KEY}"]'
+          tags:
+            - tag: component
+              value: domain
+          triggers:
+            - uuid: 473d4c7a1d8e41f78b0509548eaee123
+              expression: 'last(/INT MON-MAIL Basic/int.mail.spf.ok)=0 and {$INT.MAIL.SPF.CHECK}=1'
+              name: 'INT: SPF of {$INT.MAIL.DOMAIN} is missing or invalid'
+              priority: AVERAGE
+              description: 'Spoofing protection broken or receivers reject/junk the mail (permerror). Reason in item "Mail: SPF problem".'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 4f8deb365f7549a4939593f9f4cc3007
+          name: 'Mail: SPF problem'
+          type: DEPENDENT
+          key: int.mail.spf.error
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Empty = OK.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.spf_error
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int-mail-check.py["{$INT.MAIL.DOMAIN}","{$INT.MAIL.DKIM.SELECTORS}","{$INT.MAIL.OUTBOUND.IPS}","{$INT.MAIL.DQS.KEY}"]'
+          tags:
+            - tag: component
+              value: domain
+        - uuid: 817f514454b642178f6faf4da0ffe776
+          name: 'Mail: SPF DNS lookups'
+          type: DEPENDENT
+          key: int.mail.spf.lookups
+          delay: '0'
+          description: 'RFC 7208 allows max 10.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.spf_lookups
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int-mail-check.py["{$INT.MAIL.DOMAIN}","{$INT.MAIL.DKIM.SELECTORS}","{$INT.MAIL.OUTBOUND.IPS}","{$INT.MAIL.DQS.KEY}"]'
+          tags:
+            - tag: component
+              value: domain
+        - uuid: a76d2a97d35844ee9ea99a4fea476cab
+          name: 'Mail: SPF record'
+          type: DEPENDENT
+          key: int.mail.spf.record
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.spf
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int-mail-check.py["{$INT.MAIL.DOMAIN}","{$INT.MAIL.DKIM.SELECTORS}","{$INT.MAIL.OUTBOUND.IPS}","{$INT.MAIL.DQS.KEY}"]'
+          tags:
+            - tag: component
+              value: domain
+        - uuid: 994f2830f1c5407398b6944172fac9d8
+          name: 'Mail: DMARC policy'
+          type: DEPENDENT
+          key: int.mail.dmarc.policy
+          delay: '0'
+          description: '0 missing, 1 none, 2 quarantine, 3 reject.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.dmarc_policy
+              error_handler: DISCARD_VALUE
+          valuemap:
+            name: 'INT MAIL DMARC policy'
+          master_item:
+            key: 'int-mail-check.py["{$INT.MAIL.DOMAIN}","{$INT.MAIL.DKIM.SELECTORS}","{$INT.MAIL.OUTBOUND.IPS}","{$INT.MAIL.DQS.KEY}"]'
+          tags:
+            - tag: component
+              value: domain
+          triggers:
+            - uuid: 2f605c8cb9ca4a6285e588cd83ad9378
+              expression: 'last(/INT MON-MAIL Basic/int.mail.dmarc.policy)=0 and {$INT.MAIL.DMARC.CHECK}=1'
+              name: 'INT: Domain {$INT.MAIL.DOMAIN} has no DMARC record'
+              priority: WARNING
+              description: 'Domain can be spoofed (invoice fraud). Recommend at least p=quarantine.'
+              tags:
+                - tag: scope
+                  value: security
+            - uuid: f1bac241872f4e108cd0187e61f60714
+              expression: 'last(/INT MON-MAIL Basic/int.mail.dmarc.policy)=1 and {$INT.MAIL.DMARC.CHECK}=1'
+              name: 'INT: DMARC of {$INT.MAIL.DOMAIN} is p=none (monitoring only)'
+              priority: INFO
+              description: 'Report recommendation: move to p=quarantine after reviewing DMARC reports.'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: a9c582be660945bc94488470052cb800
+          name: 'Mail: DMARC record'
+          type: DEPENDENT
+          key: int.mail.dmarc.record
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.dmarc
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int-mail-check.py["{$INT.MAIL.DOMAIN}","{$INT.MAIL.DKIM.SELECTORS}","{$INT.MAIL.OUTBOUND.IPS}","{$INT.MAIL.DQS.KEY}"]'
+          tags:
+            - tag: component
+              value: domain
+        - uuid: 82ac4017168e4eb4857f3df5381f7a13
+          name: 'Mail: DKIM selectors missing'
+          type: DEPENDENT
+          key: int.mail.dkim.missing.count
+          delay: '0'
+          description: 'Configured selectors ({$INT.MAIL.DKIM.SELECTORS}) without a DKIM key (TXT with p= or CNAME).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.dkim_missing_count
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int-mail-check.py["{$INT.MAIL.DOMAIN}","{$INT.MAIL.DKIM.SELECTORS}","{$INT.MAIL.OUTBOUND.IPS}","{$INT.MAIL.DQS.KEY}"]'
+          tags:
+            - tag: component
+              value: domain
+          triggers:
+            - uuid: 539a79cb5c3640969d5e4629ea49b514
+              expression: 'last(/INT MON-MAIL Basic/int.mail.dkim.missing.count)>0'
+              name: 'INT: DKIM selector missing for {$INT.MAIL.DOMAIN}'
+              priority: AVERAGE
+              description: 'Outgoing mail signed with this selector fails DKIM, DMARC may reject it. Selector names in item "Mail: DKIM missing selectors".'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 32b883abf133402e9acb40182c3dc7bf
+          name: 'Mail: DKIM missing selectors'
+          type: DEPENDENT
+          key: int.mail.dkim.missing
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.dkim_missing
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int-mail-check.py["{$INT.MAIL.DOMAIN}","{$INT.MAIL.DKIM.SELECTORS}","{$INT.MAIL.OUTBOUND.IPS}","{$INT.MAIL.DQS.KEY}"]'
+          tags:
+            - tag: component
+              value: domain
+        - uuid: 01f0dc3b5b0b4f478d8d44bbd422fade
+          name: 'Mail: MTA-STS published'
+          type: DEPENDENT
+          key: int.mail.mta_sts
+          delay: '0'
+          description: 'Report only (1 = _mta-sts TXT record present).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.mta_sts
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int-mail-check.py["{$INT.MAIL.DOMAIN}","{$INT.MAIL.DKIM.SELECTORS}","{$INT.MAIL.OUTBOUND.IPS}","{$INT.MAIL.DQS.KEY}"]'
+          tags:
+            - tag: component
+              value: domain
+        - uuid: 9a08c79391d24a87a7e5c262b4fd72f9
+          name: 'Mail: Blacklisted on major lists'
+          type: DEPENDENT
+          key: int.mail.bl.major
+          delay: '0'
+          description: 'Hits of {$INT.MAIL.OUTBOUND.IPS} on Spamhaus ZEN (DQS key) and Barracuda.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.bl_major
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int-mail-check.py["{$INT.MAIL.DOMAIN}","{$INT.MAIL.DKIM.SELECTORS}","{$INT.MAIL.OUTBOUND.IPS}","{$INT.MAIL.DQS.KEY}"]'
+          tags:
+            - tag: component
+              value: blacklist
+          triggers:
+            - uuid: e3b6a7c4a16347a9912b678f7eb37517
+              expression: 'min(/INT MON-MAIL Basic/int.mail.bl.major,#2)>0'
+              name: 'INT: Outbound IP of {$INT.MAIL.DOMAIN} is on a major blacklist'
+              priority: HIGH
+              description: 'Two checks in a row. Many receivers reject mail. Listed IP@list in item "Mail: Blacklist hits"; request delisting after fixing the cause (compromised account, open relay).'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 749dc8caf0b84ad89e23bc916685abdd
+          name: 'Mail: Blacklisted on minor lists'
+          type: DEPENDENT
+          key: int.mail.bl.minor
+          delay: '0'
+          description: 'Hits on SpamCop and UCEProtect L1.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.bl_minor
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int-mail-check.py["{$INT.MAIL.DOMAIN}","{$INT.MAIL.DKIM.SELECTORS}","{$INT.MAIL.OUTBOUND.IPS}","{$INT.MAIL.DQS.KEY}"]'
+          tags:
+            - tag: component
+              value: blacklist
+          triggers:
+            - uuid: 8c88b8d9000944128ae211e4dd6f7124
+              expression: 'min(/INT MON-MAIL Basic/int.mail.bl.minor,#2)>0'
+              name: 'INT: Outbound IP of {$INT.MAIL.DOMAIN} is on a minor blacklist'
+              priority: WARNING
+              description: 'Two checks in a row. Some receivers junk or reject mail. See item "Mail: Blacklist hits".'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 5d230c57908844698d3e90d54ca75fe3
+          name: 'Mail: Blacklist hits'
+          type: DEPENDENT
+          key: int.mail.bl.hits
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.bl_hits
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int-mail-check.py["{$INT.MAIL.DOMAIN}","{$INT.MAIL.DKIM.SELECTORS}","{$INT.MAIL.OUTBOUND.IPS}","{$INT.MAIL.DQS.KEY}"]'
+          tags:
+            - tag: component
+              value: blacklist
+      tags:
+        - tag: service
+          value: MON-MAIL
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.MAIL.CERT.DAYS.WARN}'
+          value: '14'
+        - macro: '{$INT.MAIL.DKIM.SELECTORS}'
+          value: 'selector1,selector2'
+          description: 'Comma list of DKIM selectors to check. M365 default selector1,selector2. Empty = no DKIM check.'
+        - macro: '{$INT.MAIL.DMARC.CHECK}'
+          value: '1'
+          description: '0 if DMARC is already alerted by MON-DNS for this domain.'
+        - macro: '{$INT.MAIL.DOMAIN}'
+          description: 'Mail domain, e.g. acme.cz. Set on the host.'
+        - macro: '{$INT.MAIL.DQS.KEY}'
+          description: 'Integrit Spamhaus DQS key (set once as a global macro). Empty = Spamhaus not queried.'
+        - macro: '{$INT.MAIL.INTERVAL}'
+          value: 5m
+        - macro: '{$INT.MAIL.NODATA}'
+          value: 30m
+        - macro: '{$INT.MAIL.OUTBOUND.IPS}'
+          description: 'Comma list of the customer outbound IPv4 addresses (own gateway / on-prem server). Empty for pure M365 (Microsoft IPs are not ours to delist).'
+        - macro: '{$INT.MAIL.SPF.CHECK}'
+          value: '1'
+          description: '0 if SPF is already alerted by MON-DNS for this domain.'
+        - macro: '{$INT.MAIL.SMTP.CHECK}'
+          value: '1'
+          description: '0 if the external proxy cannot open outbound TCP 25 (MX port and STARTTLS triggers off).'
+      valuemaps:
+        - uuid: 81a992b5ec2c4e75b486a679c7ab20ea
+          name: 'INT MAIL DMARC policy'
+          mappings:
+            - value: '0'
+              newvalue: missing
+            - value: '1'
+              newvalue: none
+            - value: '2'
+              newvalue: quarantine
+            - value: '3'
+              newvalue: reject
+    - uuid: 73582f83d7e5430e8adedf06ee7e898e
+      template: 'INT MON-MAIL Plus'
+      name: 'INT MON-MAIL Plus'
+      description: |
+        Integrit MON-MAIL Plus: end-to-end mail flow probe for a Microsoft 365 customer (external proxy, Microsoft Graph).
+        Each run collects the probes sent by the previous run, measures delivery time and junk folder, deletes them, and sends
+        new probes: Integrit probe mailbox → customer test mailbox (inbound) and back (outbound). App "Integrit Mail Probe"
+        (Mail.Send + Mail.ReadWrite, scoped to the two test mailboxes with Exchange Online RBAC for Applications).
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-MAIL
+      items:
+        - uuid: a9545c75b27140ee9df033ea36d00eb3
+          name: 'Mail flow: Probe raw'
+          type: SCRIPT
+          key: int.mail.e2e.get
+          delay: '{$INT.MAIL.E2E.INTERVAL}'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          params: |
+            var p = JSON.parse(value);
+            var G = 'https://graph.microsoft.com/v1.0/users/';
+            var out = {error: ''};
+
+            function call(method, url, token, body) {
+                var req = new HttpRequest();
+                req.addHeader('Authorization: Bearer ' + token);
+                req.addHeader('Content-Type: application/json');
+                var resp = method === 'POST' ? req.post(url, body) : req.get(url);
+                var st = req.getStatus();
+                if (st < 200 || st >= 300) {
+                    throw method + ' ' + url.replace(/\?.*$/, '') + ' HTTP ' + st + ': ' + String(resp).substring(0, 150);
+                }
+                return resp ? JSON.parse(resp) : {};
+            }
+
+            function token(tenant) {
+                var req = new HttpRequest();
+                req.addHeader('Content-Type: application/x-www-form-urlencoded');
+                var r = JSON.parse(req.post('https://login.microsoftonline.com/' + encodeURIComponent(tenant) + '/oauth2/v2.0/token',
+                    'grant_type=client_credentials&scope=' + encodeURIComponent('https://graph.microsoft.com/.default') +
+                    '&client_id=' + encodeURIComponent(p.app_id) + '&client_secret=' + encodeURIComponent(p.secret)));
+                if (!r.access_token) {
+                    throw 'Token for ' + tenant + ' failed: ' + JSON.stringify(r).substring(0, 150);
+                }
+                return r.access_token;
+            }
+
+            // Find probe messages with the given prefix in a mailbox (all folders except Deleted Items),
+            // return the newest one and permanently delete all of them.
+            function collect(mailbox, tok, prefix) {
+                var since = new Date(Date.now() - parseInt(p.window_min, 10) * 60000).toISOString().replace(/\.\d+Z$/, 'Z');
+                var junk = call('GET', G + encodeURIComponent(mailbox) + '/mailFolders/junkemail?$select=id', tok).id;
+                var trash = call('GET', G + encodeURIComponent(mailbox) + '/mailFolders/deleteditems?$select=id', tok).id;
+                var msgs = call('GET', G + encodeURIComponent(mailbox) + '/messages?$select=id,subject,receivedDateTime,parentFolderId&$top=100&$filter=' +
+                    encodeURIComponent('receivedDateTime ge ' + since), tok).value || [];
+                var best = null;
+                msgs.forEach(function (m) {
+                    var s = String(m.subject || '');
+                    if (s.indexOf(prefix) !== 0 || m.parentFolderId === trash) {
+                        return;
+                    }
+                    var sent = parseInt(s.substring(prefix.length), 10);
+                    var lat = Math.round(Date.parse(m.receivedDateTime) / 1000 - sent);
+                    if (best === null || sent > best.sent) {
+                        best = {sent: sent, latency: lat < 0 ? 0 : lat, junk: m.parentFolderId === junk ? 1 : 0};
+                    }
+                    call('POST', G + encodeURIComponent(mailbox) + '/messages/' + m.id + '/permanentDelete', tok, '');
+                });
+                return best;
+            }
+
+            function send(fromBox, toBox, tok, subject) {
+                call('POST', G + encodeURIComponent(fromBox) + '/sendMail', tok, JSON.stringify({
+                    message: {
+                        subject: subject,
+                        body: {contentType: 'Text', content: 'Integrit monitoring mail flow probe. Automatically deleted. Do not reply.'},
+                        toRecipients: [{emailAddress: {address: toBox}}]
+                    },
+                    saveToSentItems: false
+                }));
+            }
+
+            try {
+                ['app_id', 'secret', 'probe_tenant', 'probe_mailbox', 'customer_tenant', 'customer_mailbox'].forEach(function (f) {
+                    if (!p[f] || String(p[f]).indexOf('{$') === 0) {
+                        throw 'Parameter ' + f + ' is not set (host macro).';
+                    }
+                });
+                var tagIn = 'INT-E2E-IN [' + p.tag + '] ', tagOut = 'INT-E2E-OUT [' + p.tag + '] ';
+                var tProbe = token(p.probe_tenant), tCust = token(p.customer_tenant);
+
+                var i = collect(p.customer_mailbox, tCust, tagIn);
+                out.in_found = i ? 1 : 0;
+                out.in_latency = i ? i.latency : null;
+                out.in_junk = i ? i.junk : 0;
+                var o = collect(p.probe_mailbox, tProbe, tagOut);
+                out.out_found = o ? 1 : 0;
+                out.out_latency = o ? o.latency : null;
+                out.out_junk = o ? o.junk : 0;
+
+                var now = Math.floor(Date.now() / 1000);
+                send(p.probe_mailbox, p.customer_mailbox, tProbe, tagIn + now);
+                send(p.customer_mailbox, p.probe_mailbox, tCust, tagOut + now);
+            }
+            catch (e) {
+                out.error = String(e).substring(0, 500);
+            }
+            return JSON.stringify(out);
+          timeout: 60s
+          parameters:
+            - name: app_id
+              value: '{$INT.MAIL.E2E.APP.ID}'
+            - name: customer_mailbox
+              value: '{$INT.MAIL.E2E.CUSTOMER.MAILBOX}'
+            - name: customer_tenant
+              value: '{$INT.MAIL.E2E.CUSTOMER.TENANT}'
+            - name: probe_mailbox
+              value: '{$INT.MAIL.E2E.PROBE.MAILBOX}'
+            - name: probe_tenant
+              value: '{$INT.MAIL.E2E.PROBE.TENANT}'
+            - name: secret
+              value: '{$INT.MAIL.E2E.SECRET}'
+            - name: tag
+              value: '{HOST.HOST}'
+            - name: window_min
+              value: '{$INT.MAIL.E2E.LOOKBACK}'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 575b8825f56845f19394f3a073a5df54
+          name: 'Mail flow: Probe error'
+          type: DEPENDENT
+          key: int.mail.e2e.error
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Empty = probe ran. Text = token, consent, permission or mailbox error.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.error
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mail.e2e.get
+          tags:
+            - tag: component
+              value: mailflow
+          triggers:
+            - uuid: a59ad0ce010345aa931c442b5e670375
+              expression: 'length(last(/INT MON-MAIL Plus/int.mail.e2e.error,#1))>0 and length(last(/INT MON-MAIL Plus/int.mail.e2e.error,#2))>0'
+              name: 'INT: Mail flow probe for {$INT.MAIL.DOMAIN} fails'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Two runs in a row. Check app secret, admin consent and the mailbox scope (RBAC for Applications). Text in item "Mail flow: Probe error".'
+              tags:
+                - tag: scope
+                  value: monitoring
+            - uuid: 1867c87bc1774501a8e01e31efdd63d6
+              expression: 'nodata(/INT MON-MAIL Plus/int.mail.e2e.error,{$INT.MAIL.NODATA})=1'
+              name: 'INT: Mail flow probe for {$INT.MAIL.DOMAIN} returns no data'
+              priority: AVERAGE
+              description: 'Script item times out or the external proxy is down.'
+              tags:
+                - tag: scope
+                  value: monitoring
+        - uuid: cd56193753f242ef9639b3b4b4504e7e
+          name: 'Mail flow: Inbound probe delivered'
+          type: DEPENDENT
+          key: int.mail.e2e.in.found
+          delay: '0'
+          description: '1 = the probe sent in an earlier run (Integrit probe mailbox → customer test mailbox) arrived.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.in_found
+              error_handler: DISCARD_VALUE
+          valuemap:
+            name: 'INT MAIL yes/no'
+          master_item:
+            key: int.mail.e2e.get
+          tags:
+            - tag: component
+              value: mailflow
+          triggers:
+            - uuid: e78149351f5d4bf6ad2ef74d50661aa8
+              expression: 'max(/INT MON-MAIL Plus/int.mail.e2e.in.found,{$INT.MAIL.E2E.TIMEOUT})=0'
+              name: 'INT: Inbound mail to {$INT.MAIL.DOMAIN} not delivered for {$INT.MAIL.E2E.TIMEOUT}'
+              priority: HIGH
+              description: 'No probe (Integrit probe mailbox → customer test mailbox) arrived in the last runs. Check message trace, transport rules, quarantine and MX. Depends on the Integrit self-test host (host-level dependency, INSTALL step 4).'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: b07ef238311847c7b1ca22fff12bc5e6
+          name: 'Mail flow: Inbound delivery time'
+          type: DEPENDENT
+          key: int.mail.e2e.in.latency
+          delay: '0'
+          units: s
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.in_latency
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mail.e2e.get
+          tags:
+            - tag: component
+              value: mailflow
+          triggers:
+            - uuid: f1092103b43d4a6fbb4544bd98ac6c7d
+              expression: 'last(/INT MON-MAIL Plus/int.mail.e2e.in.latency)>{$INT.MAIL.E2E.LATENCY.WARN}'
+              name: 'INT: Inbound mail to {$INT.MAIL.DOMAIN} is slow ({ITEM.LASTVALUE1})'
+              priority: WARNING
+              description: 'Probe delivery took longer than {$INT.MAIL.E2E.LATENCY.WARN} s.'
+              tags:
+                - tag: scope
+                  value: performance
+        - uuid: e4df25ca86334f438aa17752da6eaf4d
+          name: 'Mail flow: Inbound probe in junk'
+          type: DEPENDENT
+          key: int.mail.e2e.in.junk
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.in_junk
+              error_handler: DISCARD_VALUE
+          valuemap:
+            name: 'INT MAIL yes/no'
+          master_item:
+            key: int.mail.e2e.get
+          tags:
+            - tag: component
+              value: mailflow
+          triggers:
+            - uuid: f738dbeac3f543fca8be1aa8938a0b76
+              expression: 'last(/INT MON-MAIL Plus/int.mail.e2e.in.junk)=1'
+              name: 'INT: Inbound probe mail to {$INT.MAIL.DOMAIN} landed in junk'
+              priority: AVERAGE
+              description: 'Spam filtering classifies the mail as junk (reputation, SPF/DKIM/DMARC alignment, transport rule).'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 11864ce1b46f45feb30e9a978cc2e0cf
+          name: 'Mail flow: Outbound probe delivered'
+          type: DEPENDENT
+          key: int.mail.e2e.out.found
+          delay: '0'
+          description: '1 = the probe sent in an earlier run (customer test mailbox → Integrit probe mailbox) arrived.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.out_found
+              error_handler: DISCARD_VALUE
+          valuemap:
+            name: 'INT MAIL yes/no'
+          master_item:
+            key: int.mail.e2e.get
+          tags:
+            - tag: component
+              value: mailflow
+          triggers:
+            - uuid: 1c35b3859b8f44d9b5049ac32367c305
+              expression: 'max(/INT MON-MAIL Plus/int.mail.e2e.out.found,{$INT.MAIL.E2E.TIMEOUT})=0'
+              name: 'INT: Outbound mail from {$INT.MAIL.DOMAIN} not delivered for {$INT.MAIL.E2E.TIMEOUT}'
+              priority: HIGH
+              description: 'No probe (customer test mailbox → Integrit probe mailbox) arrived in the last runs. Check message trace, transport rules, quarantine and MX. Depends on the Integrit self-test host (host-level dependency, INSTALL step 4).'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 6421a591ba7d46aea82be4b36fbf2e90
+          name: 'Mail flow: Outbound delivery time'
+          type: DEPENDENT
+          key: int.mail.e2e.out.latency
+          delay: '0'
+          units: s
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.out_latency
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.mail.e2e.get
+          tags:
+            - tag: component
+              value: mailflow
+          triggers:
+            - uuid: abf9089d3a6a485db87a29e90e683891
+              expression: 'last(/INT MON-MAIL Plus/int.mail.e2e.out.latency)>{$INT.MAIL.E2E.LATENCY.WARN}'
+              name: 'INT: Outbound mail from {$INT.MAIL.DOMAIN} is slow ({ITEM.LASTVALUE1})'
+              priority: WARNING
+              description: 'Probe delivery took longer than {$INT.MAIL.E2E.LATENCY.WARN} s.'
+              tags:
+                - tag: scope
+                  value: performance
+        - uuid: a59af0800cc645ea8b01024e8426136f
+          name: 'Mail flow: Outbound probe in junk'
+          type: DEPENDENT
+          key: int.mail.e2e.out.junk
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.out_junk
+              error_handler: DISCARD_VALUE
+          valuemap:
+            name: 'INT MAIL yes/no'
+          master_item:
+            key: int.mail.e2e.get
+          tags:
+            - tag: component
+              value: mailflow
+          triggers:
+            - uuid: d9532d7803cc4a8aa109ec93ddfdba8d
+              expression: 'last(/INT MON-MAIL Plus/int.mail.e2e.out.junk)=1'
+              name: 'INT: Outbound probe mail from {$INT.MAIL.DOMAIN} landed in junk'
+              priority: AVERAGE
+              description: 'Spam filtering classifies the mail as junk (reputation, SPF/DKIM/DMARC alignment, transport rule).'
+              tags:
+                - tag: scope
+                  value: availability
+      tags:
+        - tag: service
+          value: MON-MAIL
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.MAIL.DOMAIN}'
+          description: 'Mail domain, used in names. Set on the host.'
+        - macro: '{$INT.MAIL.E2E.APP.ID}'
+          description: 'Application (client) ID of the multi-tenant app "Integrit Mail Probe" (global macro).'
+        - macro: '{$INT.MAIL.E2E.CUSTOMER.MAILBOX}'
+          description: 'Customer test mailbox (shared mailbox, no licence), e.g. zabbix-probe@acme.cz.'
+        - macro: '{$INT.MAIL.E2E.CUSTOMER.TENANT}'
+          description: 'Customer tenant ID or primary domain (acme.onmicrosoft.com).'
+        - macro: '{$INT.MAIL.E2E.INTERVAL}'
+          value: 15m
+        - macro: '{$INT.MAIL.E2E.LATENCY.WARN}'
+          value: '600'
+          description: 'Seconds. Draft: slow delivery > 10 min = WARNING.'
+        - macro: '{$INT.MAIL.E2E.LOOKBACK}'
+          value: '120'
+          description: 'Minutes searched back for probes in the mailboxes.'
+        - macro: '{$INT.MAIL.E2E.PROBE.MAILBOX}'
+          description: 'Integrit probe mailbox in the Integrit tenant (global macro).'
+        - macro: '{$INT.MAIL.E2E.PROBE.TENANT}'
+          description: 'Integrit tenant ID (global macro).'
+        - macro: '{$INT.MAIL.E2E.SECRET}'
+          type: SECRET_TEXT
+          description: 'Client secret of "Integrit Mail Probe" (global macro).'
+        - macro: '{$INT.MAIL.E2E.TIMEOUT}'
+          value: 30m
+          description: 'Not delivered for this long (2 runs at 15m) = HIGH.'
+        - macro: '{$INT.MAIL.NODATA}'
+          value: 1h
+      valuemaps:
+        - uuid: d5069bef6cb14b7d9236d7aedfbfc862
+          name: 'INT MAIL yes/no'
+          mappings:
+            - value: '0'
+              newvalue: 'no'
+            - value: '1'
+              newvalue: 'yes'

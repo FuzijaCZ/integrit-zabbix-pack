@@ -1,0 +1,29 @@
+#!/bin/sh
+# Integrit MON-SRV cron wrapper. Records exit code and run time for Zabbix.
+# Usage in crontab:  30 2 * * *  root  /usr/local/bin/int-cron-wrap db-dump /opt/scripts/db-dump.sh --full
+# Job name: letters, digits, dot, dash, underscore (other characters become _).
+# State file: /var/lib/int-cron/<job>.json, read by int-cron-status.sh. Exit code of the job is preserved.
+STATE_DIR=/var/lib/int-cron
+
+if [ $# -lt 2 ]; then
+    echo "usage: int-cron-wrap <job-name> <command> [args...]" >&2
+    exit 2
+fi
+
+job=$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')
+shift
+
+start=$(date +%s)
+"$@"
+rc=$?
+end=$(date +%s)
+
+if tmp=$(mktemp "$STATE_DIR/.$job.XXXXXX" 2>/dev/null); then
+    printf '{"job":"%s","rc":%d,"start":%d,"end":%d}\n' "$job" "$rc" "$start" "$end" > "$tmp"
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$STATE_DIR/$job.json"
+else
+    echo "int-cron-wrap: cannot write to $STATE_DIR" >&2
+fi
+
+exit $rc

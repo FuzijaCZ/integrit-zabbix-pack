@@ -1,0 +1,551 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: ebaaf573555e42c99edf971bbe94e460
+      name: Templates/Integrit/MON-SRV
+  templates:
+    - uuid: 7f4b64d79fe64d2889958c4859843556
+      template: 'INT MON-SRV Linux'
+      name: 'INT MON-SRV Linux'
+      description: |
+        Integrit MON-SRV wrapper for Linux (Debian/Ubuntu/RHEL family, Zabbix agent 2 7.0, active only).
+        Links the official 'Linux by Zabbix agent active' and overrides its macros:
+        agent loss alerts after 3 min (HIGH), filesystem WARNING 85 % / AVERAGE 95 %.
+        Adds: FS HIGH 98 % and 'full in < 14 days', critical systemd units (HIGH, active items),
+        failed units, cron jobs via int-cron-wrap, pending security updates and reboot,
+        time drift (chrony / systemd-timesyncd), repeated kernel disk/filesystem errors,
+        DISASTER on agent loss for tier=critical hosts ({$INT.TIER.CRITICAL}=1).
+        The official 'Number of installed packages has been changed' (WARNING, scope=notice) stays;
+        Integrit actions must exclude tag scope=notice. Requires linux/* files on the agent. See INSTALL.md.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'Linux by Zabbix agent active'
+      groups:
+        - name: Templates/Integrit/MON-SRV
+      items:
+        - uuid: fdc92765b49a4acdb3199d8b2ee7e3b7
+          name: 'INT: Cron jobs: Get status'
+          type: ZABBIX_ACTIVE
+          key: int.linux.cron
+          delay: 5m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 30s
+          description: 'JSON array of jobs recorded by /usr/local/bin/int-cron-wrap in /var/lib/int-cron.'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 9f18e4e078274d6eb57873838fe50c49
+          name: 'INT: Kernel disk/filesystem errors (last 15 min)'
+          type: ZABBIX_ACTIVE
+          key: int.linux.kernel.errors
+          delay: 5m
+          timeout: 30s
+          description: 'Count of kernel journal messages (priority err and worse) matching I/O, filesystem and controller error patterns in the last 15 minutes.'
+          tags:
+            - tag: component
+              value: eventlog
+          triggers:
+            - uuid: e2ee4cd3c0bd48dda38ed8238f0c5f8f
+              expression: 'last(/INT MON-SRV Linux/int.linux.kernel.errors)>={$INT.KERNEL.ERRORS.COUNT.MAX}'
+              name: 'INT: Repeated kernel disk/filesystem errors'
+              opdata: 'Errors in 15 min: {ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Check: journalctl -k -p err --since "15 min ago". Typical causes: failing disk, controller resets, filesystem corruption.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: b8b0d56ee6554e549bf5deff3a167fc0
+          name: 'INT: Systemd: Failed units'
+          type: ZABBIX_ACTIVE
+          key: int.linux.systemd.failed
+          delay: 5m
+          timeout: 10s
+          tags:
+            - tag: component
+              value: service
+          triggers:
+            - uuid: 79933bf938a34e91bef0538b1a6c11d1
+              expression: 'min(/INT MON-SRV Linux/int.linux.systemd.failed,#3)>0'
+              name: 'INT: Systemd has failed units'
+              opdata: 'Failed: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Check: systemctl --failed. Clear with systemctl reset-failed after fixing.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: fa7a27c3148f4363be024a70f510732a
+          name: 'INT: Time: Get status'
+          type: ZABBIX_ACTIVE
+          key: int.linux.time
+          delay: 15m
+          history: 1d
+          value_type: TEXT
+          trends: '0'
+          timeout: 30s
+          description: 'JSON from int-time.sh: synchronised flag and offset (chrony or systemd-timesyncd).'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 3e7e7033902d4e12bd55bbed4a4c8f35
+          name: 'INT: Time: Offset to NTP source'
+          type: DEPENDENT
+          key: int.linux.time.offset
+          delay: '0'
+          value_type: FLOAT
+          units: s
+          description: 'Positive = local clock is ahead.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.offset
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.linux.time
+          tags:
+            - tag: component
+              value: time
+          triggers:
+            - uuid: 294db40b8d6c457bb857a198e3e96a39
+              expression: 'abs(last(/INT MON-SRV Linux/int.linux.time.offset))>{$INT.TIME.DRIFT.MAX}'
+              name: 'INT: Time drift is more than {$INT.TIME.DRIFT.MAX}s'
+              opdata: 'Offset: {ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: a3af18485f6e44a3a1ee930351298ae5
+          name: 'INT: Time: Synchronised'
+          type: DEPENDENT
+          key: int.linux.time.synced
+          delay: '0'
+          valuemap:
+            name: 'INT yes/no'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.synced
+          master_item:
+            key: int.linux.time
+          tags:
+            - tag: component
+              value: time
+          triggers:
+            - uuid: b83328aca3234919a8d27c37e79fbdff
+              expression: 'max(/INT MON-SRV Linux/int.linux.time.synced,{$INT.TIME.UNSYNC.PERIOD})=0'
+              name: 'INT: Time is not synchronised for {$INT.TIME.UNSYNC.PERIOD}'
+              priority: WARNING
+              description: 'chrony / systemd-timesyncd reports no NTP synchronisation (or neither is running).'
+              dependencies:
+                - name: 'INT: Time drift is more than {$INT.TIME.DRIFT.MAX}s'
+                  expression: 'abs(last(/INT MON-SRV Linux/int.linux.time.offset))>{$INT.TIME.DRIFT.MAX}'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 127a601e3653493eb24cb8c5200714ff
+          name: 'INT: Updates: Get status'
+          type: ZABBIX_ACTIVE
+          key: int.linux.updates
+          delay: 6h
+          history: 1d
+          value_type: TEXT
+          trends: '0'
+          timeout: 3m
+          description: 'JSON from int-updates.sh (apt simulation or dnf cache; no root, no repository refresh).'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 4c843e70251447648db072db49029ea8
+          name: 'INT: Updates: Days since last package change'
+          type: DEPENDENT
+          key: int.linux.updates.lastpatch
+          delay: '0'
+          units: d
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.last_patch_days
+          master_item:
+            key: int.linux.updates
+          tags:
+            - tag: component
+              value: updates
+        - uuid: 8e01581dff9c4cd8820f0b56a2f14d15
+          name: 'INT: Updates: Reboot required'
+          type: DEPENDENT
+          key: int.linux.updates.reboot
+          delay: '0'
+          valuemap:
+            name: 'INT yes/no'
+          description: 'Debian/Ubuntu: /var/run/reboot-required. RHEL: newest installed kernel is not the running one.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.reboot_required
+          master_item:
+            key: int.linux.updates
+          tags:
+            - tag: component
+              value: updates
+        - uuid: 3e57d80403d74d9e9ef79dc45693a925
+          name: 'INT: Updates: Pending security updates'
+          type: DEPENDENT
+          key: int.linux.updates.security
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.security
+          master_item:
+            key: int.linux.updates
+          tags:
+            - tag: component
+              value: updates
+        - uuid: 28198e23261848a2a70a9a7471cb899b
+          name: 'INT: Updates: Pending updates total'
+          type: DEPENDENT
+          key: int.linux.updates.total
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.total
+          master_item:
+            key: int.linux.updates
+          tags:
+            - tag: component
+              value: updates
+          triggers:
+            - uuid: 286001b49a1d4446b5b8f4486d8e2c38
+              expression: 'nodata(/INT MON-SRV Linux/int.linux.updates.total,{$INT.UPDATES.NODATA})=1'
+              name: 'INT: Update status has no data for {$INT.UPDATES.NODATA}'
+              priority: WARNING
+              description: 'int-updates.sh returns nothing or fails. Check item "INT: Updates: Get status".'
+              dependencies:
+                - name: 'Linux: Active checks are not available'
+                  expression: 'min(/INT MON-SRV Linux/zabbix[host,active_agent,available],{$AGENT.TIMEOUT})=2'
+              tags:
+                - tag: scope
+                  value: availability
+      discovery_rules:
+        - uuid: dcbec3fcb65b4b3f830b687b3c893118
+          name: 'INT: Cron jobs discovery'
+          type: DEPENDENT
+          key: int.linux.cron.discovery
+          delay: '0'
+          filter:
+            conditions:
+              - macro: '{#JOB}'
+                value: '{$INT.CRON.JOB.MATCHES}'
+                formulaid: A
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: 99a9d216c9374887951076529b09522b
+              name: 'INT: Cron [{#JOB}]: Duration of last run'
+              type: DEPENDENT
+              key: 'int.linux.cron.duration[{#JOB}]'
+              delay: '0'
+              units: s
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.[?(@.job==''{#JOB}'')].duration.first()'
+              master_item:
+                key: int.linux.cron
+              tags:
+                - tag: component
+                  value: task
+                - tag: task
+                  value: '{#JOB}'
+            - uuid: f5b88454de0946c5bc59994ddc423f3c
+              name: 'INT: Cron [{#JOB}]: Exit code of last run'
+              type: DEPENDENT
+              key: 'int.linux.cron.rc[{#JOB}]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.[?(@.job==''{#JOB}'')].rc.first()'
+              master_item:
+                key: int.linux.cron
+              tags:
+                - tag: component
+                  value: task
+                - tag: task
+                  value: '{#JOB}'
+              trigger_prototypes:
+                - uuid: d3f3ffe0a4534cc189e91bdd5692ff36
+                  expression: 'last(/INT MON-SRV Linux/int.linux.cron.rc[{#JOB}])<>0'
+                  name: 'INT: Cron job [{#JOB}] failed'
+                  opdata: 'Exit code: {ITEM.LASTVALUE1}'
+                  priority: AVERAGE
+                  tags:
+                    - tag: scope
+                      value: availability
+            - uuid: 020ccc0872144480b8d8e1cb15cd27c7
+              name: 'INT: Cron [{#JOB}]: Time since last run'
+              type: DEPENDENT
+              key: 'int.linux.cron.age[{#JOB}]'
+              delay: '0'
+              units: s
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.[?(@.job==''{#JOB}'')].age.first()'
+              master_item:
+                key: int.linux.cron
+              tags:
+                - tag: component
+                  value: task
+                - tag: task
+                  value: '{#JOB}'
+              trigger_prototypes:
+                - uuid: d56e50954d4242e380d0b5a9563d843d
+                  expression: 'last(/INT MON-SRV Linux/int.linux.cron.age[{#JOB}])>{$INT.CRON.MAX.AGE:"{#JOB}"}'
+                  name: 'INT: Cron job [{#JOB}] has not run for more than {$INT.CRON.MAX.AGE:"{#JOB}"}'
+                  opdata: 'Last run: {ITEM.LASTVALUE1} ago'
+                  priority: AVERAGE
+                  description: 'Cron line removed/commented, cron not running, or server was off. Weekly jobs need {$INT.CRON.MAX.AGE:"<job>"} on the host. Remove /var/lib/int-cron/<job>.json when a job is retired.'
+                  tags:
+                    - tag: scope
+                      value: availability
+          master_item:
+            key: int.linux.cron
+          lld_macro_paths:
+            - lld_macro: '{#JOB}'
+              path: $.job
+        - uuid: 96d7dfed246a40b691a6195433db3b9f
+          name: 'INT: Critical systemd units discovery'
+          type: ZABBIX_ACTIVE
+          key: 'systemd.unit.discovery[service]'
+          delay: 1h
+          filter:
+            conditions:
+              - macro: '{#UNIT.NAME}'
+                value: '{$INT.SYSTEMD.CRIT.MATCHES}'
+                formulaid: A
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Active-mode replacement for the passive official systemd template. Discovers only units in {$INT.SYSTEMD.CRIT.MATCHES} (role list, set per host). Needs Zabbix agent 2.'
+          item_prototypes:
+            - uuid: 332b1057bc3d414e820fef5ce872ae65
+              name: 'INT: Unit {#UNIT.NAME}: Active state'
+              type: DEPENDENT
+              key: 'int.systemd.active_state["{#UNIT.NAME}"]'
+              delay: '0'
+              valuemap:
+                name: 'INT Unit active state'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.ActiveState.state
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1h
+              master_item:
+                key: 'systemd.unit.get["{#UNIT.NAME}"]'
+              tags:
+                - tag: component
+                  value: service
+              trigger_prototypes:
+                - uuid: fb6731078be04df1aa065d08a0415627
+                  expression: 'count(/INT MON-SRV Linux/int.systemd.active_state["{#UNIT.NAME}"],#3,"ne",1)=3'
+                  name: 'INT: Critical unit {#UNIT.NAME} is not running'
+                  opdata: 'State: {ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'Unit from the Integrit critical list for this server role is not active for 3 checks.'
+                  tags:
+                    - tag: scope
+                      value: availability
+            - uuid: 18e915432d65433cb36e94ca599872ba
+              name: 'INT: Unit {#UNIT.NAME}: Get data'
+              type: ZABBIX_ACTIVE
+              key: 'systemd.unit.get["{#UNIT.NAME}"]'
+              delay: 1m
+              history: '0'
+              value_type: TEXT
+              trends: '0'
+              tags:
+                - tag: component
+                  value: raw
+        - uuid: 083c578529284279a566b6635bf41b90
+          name: 'INT: Filesystem space discovery'
+          type: DEPENDENT
+          key: int.vfs.fs.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#FSNAME}'
+                value: '{$VFS.FS.FSNAME.MATCHES}'
+                formulaid: A
+              - macro: '{#FSNAME}'
+                value: '{$VFS.FS.FSNAME.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: B
+              - macro: '{#FSTYPE}'
+                value: '{$VFS.FS.FSTYPE.MATCHES}'
+                formulaid: C
+              - macro: '{#FSTYPE}'
+                value: '{$VFS.FS.FSTYPE.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: D
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Same filesystems and filter macros as the official discovery. Adds HIGH at {$INT.VFS.FS.PUSED.MAX.HIGH} % and the 14-day fill forecast.'
+          item_prototypes:
+            - uuid: ede0dc35756e483a9140db157a0ae51b
+              name: 'INT: FS [{#FSNAME}]: Space used, in %'
+              type: DEPENDENT
+              key: 'int.vfs.fs.pused[{#FSNAME}]'
+              delay: '0'
+              value_type: FLOAT
+              units: '%'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.[?(@.fsname==''{#FSNAME}'')].bytes.pused.first()'
+              master_item:
+                key: vfs.fs.get
+              tags:
+                - tag: component
+                  value: storage
+                - tag: filesystem
+                  value: '{#FSNAME}'
+              trigger_prototypes:
+                - uuid: bea1a40013cc47da961c7e28a4405d60
+                  expression: 'min(/INT MON-SRV Linux/int.vfs.fs.pused[{#FSNAME}],5m)>{$INT.VFS.FS.PUSED.MAX.HIGH:"{#FSNAME}"}'
+                  name: 'INT: FS [{#FSNAME}]: Space is almost exhausted (> {$INT.VFS.FS.PUSED.MAX.HIGH:"{#FSNAME}"}%)'
+                  opdata: 'Space used: {{ITEM.LASTVALUE1}.fmtnum(1)}%'
+                  priority: HIGH
+                  description: 'Writes will fail soon. The official AVERAGE trigger (> {$VFS.FS.PUSED.MAX.CRIT}%) is also active.'
+                  tags:
+                    - tag: scope
+                      value: capacity
+                - uuid: 7d4fcd46f04c451ca7e071019f92b4b0
+                  expression: |
+                    timeleft(/INT MON-SRV Linux/int.vfs.fs.pused[{#FSNAME}],{$INT.VFS.FS.TIMELEFT.PERIOD},100)<{$INT.VFS.FS.TIMELEFT.MIN:"{#FSNAME}"}
+                    and last(/INT MON-SRV Linux/int.vfs.fs.pused[{#FSNAME}])>{$INT.VFS.FS.TIMELEFT.PUSED.MIN:"{#FSNAME}"}
+                  name: 'INT: FS [{#FSNAME}]: Will be full in less than {$INT.VFS.FS.TIMELEFT.MIN:"{#FSNAME}"}'
+                  opdata: 'Space used: {{ITEM.LASTVALUE1}.fmtnum(1)}%'
+                  priority: AVERAGE
+                  description: 'Linear forecast over {$INT.VFS.FS.TIMELEFT.PERIOD}; only evaluated above {$INT.VFS.FS.TIMELEFT.PUSED.MIN:"{#FSNAME}"} % used.'
+                  dependencies:
+                    - name: 'INT: FS [{#FSNAME}]: Space is almost exhausted (> {$INT.VFS.FS.PUSED.MAX.HIGH:"{#FSNAME}"}%)'
+                      expression: 'min(/INT MON-SRV Linux/int.vfs.fs.pused[{#FSNAME}],5m)>{$INT.VFS.FS.PUSED.MAX.HIGH:"{#FSNAME}"}'
+                  tags:
+                    - tag: scope
+                      value: capacity
+          master_item:
+            key: vfs.fs.get
+          lld_macro_paths:
+            - lld_macro: '{#FSNAME}'
+              path: $.fsname
+            - lld_macro: '{#FSTYPE}'
+              path: $.fstype
+      tags:
+        - tag: service
+          value: MON-SRV
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$AGENT.TIMEOUT}'
+          value: 3m
+          description: 'Override of official 5m: HIGH "Active checks are not available" after 3 min (draft 4.1).'
+        - macro: '{$INT.CRON.JOB.MATCHES}'
+          value: '.+'
+          description: 'Filter for cron job names recorded by int-cron-wrap.'
+        - macro: '{$INT.CRON.MAX.AGE}'
+          value: 25h
+          description: 'Max time since last run. Use context per job, e.g. {$INT.CRON.MAX.AGE:"weekly-export"}=8d.'
+        - macro: '{$INT.KERNEL.ERRORS.COUNT.MAX}'
+          value: '3'
+          description: 'Kernel error messages within 15 min that raise AVERAGE.'
+        - macro: '{$INT.REBOOT.PENDING.MAX.AGE}'
+          value: '7'
+          description: 'Days a pending reboot after the last package change is tolerated.'
+        - macro: '{$INT.SYSTEMD.CRIT.MATCHES}'
+          value: '^$'
+          description: 'Regex of critical unit names for this server role, set per host (see INSTALL.md presets). Default matches nothing.'
+        - macro: '{$INT.TIER.CRITICAL}'
+          value: '0'
+          description: 'Set 1 on hosts with tag tier=critical: agent loss becomes DISASTER.'
+        - macro: '{$INT.TIME.DRIFT.MAX}'
+          value: '60'
+          description: 'Max absolute clock offset in seconds.'
+        - macro: '{$INT.TIME.UNSYNC.PERIOD}'
+          value: 1h
+        - macro: '{$INT.UPDATES.NODATA}'
+          value: 25h
+        - macro: '{$INT.UPDATES.SEC.MAX.AGE}'
+          value: '14'
+          description: 'Days security updates may stay pending without any package change.'
+        - macro: '{$INT.VFS.FS.PUSED.MAX.HIGH}'
+          value: '98'
+          description: 'FS used % for HIGH. Context per mount point, e.g. {$INT.VFS.FS.PUSED.MAX.HIGH:"/var"}.'
+        - macro: '{$INT.VFS.FS.TIMELEFT.MIN}'
+          value: 14d
+        - macro: '{$INT.VFS.FS.TIMELEFT.PERIOD}'
+          value: 7d
+          description: 'History window for the fill forecast.'
+        - macro: '{$INT.VFS.FS.TIMELEFT.PUSED.MIN}'
+          value: '70'
+          description: 'Forecast is ignored below this FS used % (avoids noise on near-empty volumes).'
+        - macro: '{$VFS.FS.PUSED.MAX.CRIT}'
+          value: '95'
+          description: 'Override of official 90: AVERAGE at 95 %.'
+        - macro: '{$VFS.FS.PUSED.MAX.WARN}'
+          value: '85'
+          description: 'Override of official 80: WARNING at 85 %.'
+      valuemaps:
+        - uuid: 689911242220431cbf4454e334d1acd0
+          name: 'INT Unit active state'
+          mappings:
+            - value: '0'
+              newvalue: unknown
+            - value: '1'
+              newvalue: active
+            - value: '2'
+              newvalue: reloading
+            - value: '3'
+              newvalue: inactive
+            - value: '4'
+              newvalue: failed
+            - value: '5'
+              newvalue: activating
+            - value: '6'
+              newvalue: deactivating
+        - uuid: 0bd728ae0a72499b985dc542ee6a8fdb
+          name: 'INT yes/no'
+          mappings:
+            - value: '0'
+              newvalue: 'No'
+            - value: '1'
+              newvalue: 'Yes'
+  triggers:
+    - uuid: 654a2775af834983a91d9ff762b4c7a9
+      expression: 'min(/INT MON-SRV Linux/zabbix[host,active_agent,available],{$AGENT.TIMEOUT})=2 and {$INT.TIER.CRITICAL}=1'
+      name: 'INT: Critical server is unreachable'
+      priority: DISASTER
+      description: 'Only for tier=critical hosts ({$INT.TIER.CRITICAL}=1). Fires together with the official HIGH "Active checks are not available".'
+      tags:
+        - tag: scope
+          value: availability
+    - uuid: c7ce0075d1fd43bfb5be3bf13d091fa7
+      expression: 'last(/INT MON-SRV Linux/int.linux.updates.reboot)=1 and last(/INT MON-SRV Linux/int.linux.updates.lastpatch)>{$INT.REBOOT.PENDING.MAX.AGE}'
+      name: 'INT: Reboot pending for more than {$INT.REBOOT.PENDING.MAX.AGE} days'
+      opdata: 'Last package change {ITEM.LASTVALUE2} days ago'
+      priority: WARNING
+      description: 'Updated kernel/libraries are not active until reboot.'
+      tags:
+        - tag: scope
+          value: security
+    - uuid: 70c7557b9934451592dce5648cc982c2
+      expression: 'last(/INT MON-SRV Linux/int.linux.updates.security)>0 and last(/INT MON-SRV Linux/int.linux.updates.lastpatch)>{$INT.UPDATES.SEC.MAX.AGE}'
+      name: 'INT: Security updates pending, no patching for more than {$INT.UPDATES.SEC.MAX.AGE} days'
+      opdata: 'Pending: {ITEM.LASTVALUE1}, last package change {ITEM.LASTVALUE2} days ago'
+      priority: WARNING
+      tags:
+        - tag: scope
+          value: security

@@ -1,0 +1,370 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: cf102095fe0d494abb49d7f54b5db425
+      name: Templates/Integrit/MON-WEB-FUNC
+  templates:
+    - uuid: 74312edcfc8a48d785231977cd766edd
+      template: 'INT MON-WEB-FUNC Scenario'
+      name: 'INT MON-WEB-FUNC Scenario'
+      description: |
+        Integrit MON-WEB-FUNC: one functional web scenario (form, login, e-shop until before payment) per Zabbix host, run in a real
+        Chrome by a Zabbix 7.0 Browser item on the external proxy (Selenium WebDriver). Steps are a JSON list in {$INT.WEBFUNC.STEPS}
+        (actions open, fill, click, expect, expect_url). Optional: confirmation e-mail must arrive in a test mailbox (Microsoft Graph).
+        The official 'Website by Browser' only measures one page load and is used by MON-WEB, not here.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-WEB-FUNC
+      items:
+        - uuid: 41aa4d6829a24663b52bff9cb577041f
+          name: 'Scenario: Duration'
+          type: DEPENDENT
+          key: int.webfunc.duration
+          delay: '0'
+          value_type: FLOAT
+          units: s
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.duration
+          master_item:
+            key: int.webfunc.run
+          tags:
+            - tag: component
+              value: scenario
+          triggers:
+            - uuid: c97683859300434dbf38bf49ed93e510
+              expression: 'min(/INT MON-WEB-FUNC Scenario/int.webfunc.duration,#2)>{$INT.WEBFUNC.DURATION.MAX}'
+              name: 'INT: Scenario {HOST.NAME} takes longer than {$INT.WEBFUNC.DURATION.MAX}s'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: WARNING
+              dependencies:
+                - name: 'INT: Scenario {HOST.NAME} failed twice in a row'
+                  expression: 'max(/INT MON-WEB-FUNC Scenario/int.webfunc.ok,#2)=0'
+              tags:
+                - tag: scope
+                  value: performance
+        - uuid: b968b879c93b40c5a00381aada26088f
+          name: 'Scenario: Error'
+          type: DEPENDENT
+          key: int.webfunc.error
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.error
+          master_item:
+            key: int.webfunc.run
+          tags:
+            - tag: component
+              value: scenario
+        - uuid: e45453466e824dd488d3695c27c3a165
+          name: 'Scenario: Failed step'
+          type: DEPENDENT
+          key: int.webfunc.failed_step
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.failed_step
+          master_item:
+            key: int.webfunc.run
+          tags:
+            - tag: component
+              value: scenario
+        - uuid: 36340a8432924d6586c8660b97d718db
+          name: 'Scenario: Result'
+          type: DEPENDENT
+          key: int.webfunc.ok
+          delay: '0'
+          valuemap:
+            name: 'INT scenario result'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.ok
+          master_item:
+            key: int.webfunc.run
+          tags:
+            - tag: component
+              value: scenario
+          triggers:
+            - uuid: 390d8a418e2c43e3a6ac9756b61d997c
+              expression: 'max(/INT MON-WEB-FUNC Scenario/int.webfunc.ok,#2)=0'
+              name: 'INT: Scenario {HOST.NAME} failed twice in a row'
+              priority: HIGH
+              description: 'The user journey does not work. See items "Scenario: Failed step", "Scenario: Error" and the screenshot (Latest data → Scenario: Screenshot).'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 64b370b38f91455cb2ab40a1a2233d7e
+          name: 'Scenario: Run'
+          type: BROWSER
+          key: int.webfunc.run
+          delay: '{$INT.WEBFUNC.INTERVAL}'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          params: |
+            var p = JSON.parse(value);
+            var res = {ok: 0, failed_step: '', error: '', steps: [], duration: 0};
+            var started = Date.now();
+            var current = 'parse steps';
+            var browser;
+
+            function element(s) {
+                var by = s.xpath ? 'xpath' : 'css selector';
+                var el = browser.findElement(by, s.xpath || s.selector);
+                if (el === null) {
+                    throw 'Element not found: ' + (s.xpath || s.selector);
+                }
+                return el;
+            }
+
+            try {
+                var steps = JSON.parse(p.steps);
+                if (!Array.isArray(steps) || steps.length === 0) {
+                    throw 'Macro {$INT.WEBFUNC.STEPS} must be a JSON array of steps.';
+                }
+                current = 'start browser';
+                browser = new Browser(Browser.chromeOptions());
+                browser.setScreenSize(1920, 1080);
+                browser.setElementWaitTimeout(parseInt(p.element_wait, 10) * 1000);
+
+                steps.forEach(function (s, i) {
+                    current = (i + 1) + ': ' + (s.name || s.action);
+                    var t = Date.now();
+                    switch (s.action) {
+                        case 'open':
+                            browser.navigate(s.url);
+                            break;
+                        case 'fill':
+                            var f = element(s);
+                            f.clear();
+                            f.sendKeys(String(s.value).replace('{TS}', String(Math.floor(Date.now() / 1000))));
+                            break;
+                        case 'click':
+                            element(s).click();
+                            break;
+                        case 'expect':
+                            var e = element(s);
+                            if (s.text && e.getText().indexOf(s.text) === -1) {
+                                throw 'Text "' + s.text + '" not found in ' + (s.xpath || s.selector);
+                            }
+                            break;
+                        case 'expect_url':
+                            if (browser.getUrl().indexOf(s.contains) === -1) {
+                                throw 'URL does not contain "' + s.contains + '" (is ' + browser.getUrl() + ')';
+                            }
+                            break;
+                        default:
+                            throw 'Unknown action "' + s.action + '" (use open, fill, click, expect, expect_url).';
+                    }
+                    res.steps.push({name: current, ms: Date.now() - t});
+                });
+                res.ok = 1;
+            }
+            catch (e) {
+                res.failed_step = current;
+                res.error = String((e && e.message) ? e.message : e).substring(0, 500);
+                if (browser) {
+                    try {
+                        res.screenshot = browser.getScreenshot();
+                    }
+                    catch (x) {
+                        res.screenshot_error = String(x);
+                    }
+                }
+            }
+            res.duration = (Date.now() - started) / 1000;
+            return JSON.stringify(res);
+          description: 'Runs the steps from {$INT.WEBFUNC.STEPS} in Chrome. {TS} in a fill value is replaced by the Unix time (unique test submissions).'
+          timeout: 120s
+          parameters:
+            - name: element_wait
+              value: '{$INT.WEBFUNC.ELEMENT.WAIT}'
+            - name: steps
+              value: '{$INT.WEBFUNC.STEPS}'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 388ae6ed12c34862b0b5e17a389b464e
+          name: 'Scenario: Screenshot'
+          type: DEPENDENT
+          key: int.webfunc.screenshot
+          delay: '0'
+          history: 7d
+          value_type: BINARY
+          trends: '0'
+          description: 'Screenshot of the page at the failed step (empty when the scenario passes).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.screenshot
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.webfunc.run
+          tags:
+            - tag: component
+              value: scenario
+        - uuid: a0ce671234be488da249fa49244df267
+          name: 'Confirmation mail: Error'
+          type: DEPENDENT
+          key: int.webfunc.mail.error
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.error
+          master_item:
+            key: int.webfunc.mail.get
+          tags:
+            - tag: component
+              value: mail
+          triggers:
+            - uuid: 33b8b047477f4678a1001cb74c25280b
+              expression: 'length(last(/INT MON-WEB-FUNC Scenario/int.webfunc.mail.error))>0 and {$INT.WEBFUNC.MAIL.CHECK}=1'
+              name: 'INT: Confirmation mail check for {HOST.NAME} fails'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 1c8880887df1444b80fd9a40d1861b28
+          name: 'Confirmation mail: Get data'
+          type: SCRIPT
+          key: int.webfunc.mail.get
+          delay: 15m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          params: |
+            var p = JSON.parse(value);
+            var out = {count: 0, last_subject: '', error: ''};
+            try {
+                if (!p.mailbox || p.mailbox.indexOf('{$') === 0) {
+                    throw 'Set {$INT.WEBFUNC.MAIL.MAILBOX}.';
+                }
+                var req = new HttpRequest();
+                req.addHeader('Content-Type: application/x-www-form-urlencoded');
+                var tok = JSON.parse(req.post('https://login.microsoftonline.com/' + encodeURIComponent(p.tenant_id) + '/oauth2/v2.0/token',
+                    'grant_type=client_credentials&scope=' + encodeURIComponent('https://graph.microsoft.com/.default') +
+                    '&client_id=' + encodeURIComponent(p.app_id) + '&client_secret=' + encodeURIComponent(p.secret)));
+                if (!tok.access_token) {
+                    throw 'Token request failed: ' + JSON.stringify(tok).substring(0, 200);
+                }
+                var since = new Date(Date.now() - parseInt(p.window_min, 10) * 60000).toISOString().replace(/\.\d+Z$/, 'Z');
+                var g = new HttpRequest();
+                g.addHeader('Authorization: Bearer ' + tok.access_token);
+                var url = 'https://graph.microsoft.com/v1.0/users/' + encodeURIComponent(p.mailbox) + '/messages?$select=subject,receivedDateTime&$top=50' +
+                    '&$filter=' + encodeURIComponent('receivedDateTime ge ' + since);
+                var resp = g.get(url);
+                if (g.getStatus() !== 200) {
+                    throw 'HTTP ' + g.getStatus() + ': ' + String(resp).substring(0, 200);
+                }
+                var rx = new RegExp(p.subject_regex, 'i');
+                JSON.parse(resp).value.forEach(function (m) {
+                    if (rx.test(m.subject || '')) {
+                        out.count++;
+                        out.last_subject = m.subject;
+                    }
+                });
+            }
+            catch (e) {
+                out.error = String(e).substring(0, 500);
+            }
+            return JSON.stringify(out);
+          description: 'Counts mails in the test mailbox whose subject matches {$INT.WEBFUNC.MAIL.SUBJECT} received in the last {$INT.WEBFUNC.MAIL.WINDOW} minutes.'
+          timeout: 30s
+          parameters:
+            - name: app_id
+              value: '{$INT.WEBFUNC.MAIL.APP.ID}'
+            - name: mailbox
+              value: '{$INT.WEBFUNC.MAIL.MAILBOX}'
+            - name: secret
+              value: '{$INT.WEBFUNC.MAIL.SECRET}'
+            - name: subject_regex
+              value: '{$INT.WEBFUNC.MAIL.SUBJECT}'
+            - name: tenant_id
+              value: '{$INT.WEBFUNC.MAIL.TENANT}'
+            - name: window_min
+              value: '{$INT.WEBFUNC.MAIL.WINDOW}'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: bb7559a3c5eb401681cff99fa07cb948
+          name: 'Confirmation mail: Received in window'
+          type: DEPENDENT
+          key: int.webfunc.mail.count
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.count
+          master_item:
+            key: int.webfunc.mail.get
+          tags:
+            - tag: component
+              value: mail
+          triggers:
+            - uuid: fa38ed4036ea409d95fc01305eaf4a83
+              expression: 'last(/INT MON-WEB-FUNC Scenario/int.webfunc.mail.count)=0 and {$INT.WEBFUNC.MAIL.CHECK}=1'
+              name: 'INT: Confirmation mail for {HOST.NAME} not received within {$INT.WEBFUNC.MAIL.WINDOW} min'
+              priority: HIGH
+              description: 'The form works in the browser but the confirmation / lead mail does not arrive (mail server, SMTP plugin, spam filter).'
+              dependencies:
+                - name: 'INT: Scenario {HOST.NAME} failed twice in a row'
+                  expression: 'max(/INT MON-WEB-FUNC Scenario/int.webfunc.ok,#2)=0'
+              tags:
+                - tag: scope
+                  value: availability
+      tags:
+        - tag: service
+          value: MON-WEB-FUNC
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.WEBFUNC.DURATION.MAX}'
+          value: '30'
+          description: 'Seconds for the whole scenario before WARNING.'
+        - macro: '{$INT.WEBFUNC.ELEMENT.WAIT}'
+          value: '10'
+          description: 'Seconds to wait for an element to appear.'
+        - macro: '{$INT.WEBFUNC.INTERVAL}'
+          value: 30m
+          description: 'Draft: every 15-60 min; each run creates a test submission.'
+        - macro: '{$INT.WEBFUNC.MAIL.APP.ID}'
+          description: 'Client ID of the Integrit Mail Probe app (Mail.Read limited to the test mailbox).'
+        - macro: '{$INT.WEBFUNC.MAIL.CHECK}'
+          value: '0'
+          description: '1 = confirmation mail must arrive.'
+        - macro: '{$INT.WEBFUNC.MAIL.MAILBOX}'
+          value: webtest@integrit.cz
+        - macro: '{$INT.WEBFUNC.MAIL.SECRET}'
+          type: SECRET_TEXT
+        - macro: '{$INT.WEBFUNC.MAIL.SUBJECT}'
+          value: 'INT-TEST'
+          description: 'Regex matched against the subject of the confirmation / lead mail.'
+        - macro: '{$INT.WEBFUNC.MAIL.TENANT}'
+          value: integrit.cz
+        - macro: '{$INT.WEBFUNC.MAIL.WINDOW}'
+          value: '45'
+          description: 'Minutes to look back (must cover the scenario interval plus delivery time).'
+        - macro: '{$INT.WEBFUNC.STEPS}'
+          description: 'JSON array of steps (max 2048 characters), see INSTALL.md.'
+      valuemaps:
+        - uuid: 38145cb0ce8949baadf06e1e03049017
+          name: 'INT scenario result'
+          mappings:
+            - value: '0'
+              newvalue: Failed
+            - value: '1'
+              newvalue: OK

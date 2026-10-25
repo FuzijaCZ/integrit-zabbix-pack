@@ -1,0 +1,27 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: ebaaf573555e42c99edf971bbe94e460
+      name: Templates/Integrit/MON-SRV
+  templates:
+    - uuid: f26aec9f949448d2a942b7a7ce5d177b
+      template: 'INT MON-SRV SMART'
+      name: 'INT MON-SRV SMART'
+      description: |
+        Integrit MON-SRV add-on for PHYSICAL servers with directly attached disks (Windows or Linux).
+        Links the official 'SMART by Zabbix agent 2 active' unchanged (HIGH on failing disk / failed self-test,
+        AVERAGE on critical temperature / NVMe wear). Needs smartmontools 7.1+ and Plugins.Smart.Path on agent 2.
+        Disks behind hardware RAID controllers are usually not visible: they belong to MON-HW (iDRAC/iLO).
+        Do not link on virtual machines.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'SMART by Zabbix agent 2 active'
+      groups:
+        - name: Templates/Integrit/MON-SRV
+      tags:
+        - tag: service
+          value: MON-SRV
+        - tag: version
+          value: '1.0'

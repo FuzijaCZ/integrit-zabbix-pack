@@ -1,0 +1,338 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: d1e1c0692573455eace90bfa423f16b7
+      name: Templates/Integrit/MON-VIRT
+  templates:
+    - uuid: a25a3e9bd299493d9d9f652da3c09f7f
+      template: 'INT MON-VIRT Hyper-V'
+      name: 'INT MON-VIRT Hyper-V'
+      description: |
+        Integrit MON-VIRT template for Microsoft Hyper-V hosts (standalone or failover cluster), Zabbix agent 2 active.
+        No official Zabbix 7.0 template exists. Link on each Hyper-V host next to INT MON-SRV Windows (host CPU/RAM/disks).
+        Per host: VMs (state, replication health, oldest checkpoint age). Per cluster (reported only by the owner of the core
+        Cluster Group, so problems are raised once): nodes down DISASTER, CSV free space AVERAGE / HIGH, clustered VM roles.
+        Critical VMs: {$INT.HV.VM.CRITICAL:"<vm name>"}=1. Requires hyperv/int_mon_virt_hyperv.conf and .ps1 on the agent.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-VIRT
+      items:
+        - uuid: dfe4fba7cc1e4cad8918362c88890d46
+          name: 'Hyper-V: Cluster: Get data'
+          type: ZABBIX_ACTIVE
+          key: int.hv.cluster
+          delay: 5m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 1m
+          description: 'Cluster JSON; values only from the node that owns the core Cluster Group ({"owner":0} elsewhere).'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: d3561ee3bc274c53976600f8f72eeb04
+          name: 'Hyper-V: Cluster: Nodes down'
+          type: DEPENDENT
+          key: int.hv.cluster.nodes.down
+          delay: '0'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var d = JSON.parse(value);
+                  if (d.owner !== 1) {
+                      throw 'Not the cluster owner node.';
+                  }
+                  return d.nodes_down;
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.hv.cluster
+          tags:
+            - tag: component
+              value: cluster
+          triggers:
+            - uuid: 58cf3b9e5ab841cf85dd5a9d5b4f3664
+              expression: 'last(/INT MON-VIRT Hyper-V/int.hv.cluster.nodes.down)>0 and nodata(/INT MON-VIRT Hyper-V/int.hv.cluster.nodes.down,15m)=0'
+              name: 'INT: Hyper-V cluster has {ITEM.LASTVALUE1} node(s) down'
+              priority: DISASTER
+              description: 'Failover cluster lost a node: no HA reserve, quorum at risk. Paused (drained) nodes are not counted.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 4906ec64f12a4952b7b0cb6dff98a62c
+          name: 'Hyper-V: VMs: Get data'
+          type: ZABBIX_ACTIVE
+          key: int.hv.vms
+          delay: 5m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 1m
+          tags:
+            - tag: component
+              value: raw
+      discovery_rules:
+        - uuid: 52dd5c409af84c15a2ddac9d897876ba
+          name: 'Hyper-V: Cluster shared volumes discovery'
+          type: DEPENDENT
+          key: int.hv.csv.discovery
+          delay: '0'
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: f92e7db9853946228eceb9a75e0e3fac
+              name: 'CSV {#CSV.NAME}: Free space, in %'
+              type: DEPENDENT
+              key: 'int.hv.csv.pfree["{#CSV.NAME}"]'
+              delay: '0'
+              value_type: FLOAT
+              units: '%'
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var d = JSON.parse(value);
+                      if (d.owner !== 1) {
+                          throw 'Not the cluster owner node.';
+                      }
+                      var c = (d.csv || []).filter(function (x) { return x.name === '{#CSV.NAME}'; })[0];
+                      if (!c) {
+                          throw 'CSV not found.';
+                      }
+                      return c.pfree;
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: int.hv.cluster
+              tags:
+                - tag: component
+                  value: storage
+                - tag: csv
+                  value: '{#CSV.NAME}'
+              trigger_prototypes:
+                - uuid: 831d2e47c9fa4fc793d8852c5dd5c379
+                  expression: 'max(/INT MON-VIRT Hyper-V/int.hv.csv.pfree["{#CSV.NAME}"],15m)<{$INT.HV.CSV.PFREE.CRIT:"{#CSV.NAME}"} and nodata(/INT MON-VIRT Hyper-V/int.hv.csv.pfree["{#CSV.NAME}"],15m)=0'
+                  name: 'INT: CSV {#CSV.NAME} free space below {$INT.HV.CSV.PFREE.CRIT:"{#CSV.NAME}"}%'
+                  opdata: 'Free: {{ITEM.LASTVALUE1}.fmtnum(1)}%'
+                  priority: HIGH
+                  tags:
+                    - tag: scope
+                      value: capacity
+                - uuid: bc0442bf2de949b08bd58eb30e767f31
+                  expression: 'max(/INT MON-VIRT Hyper-V/int.hv.csv.pfree["{#CSV.NAME}"],15m)<{$INT.HV.CSV.PFREE.WARN:"{#CSV.NAME}"} and nodata(/INT MON-VIRT Hyper-V/int.hv.csv.pfree["{#CSV.NAME}"],15m)=0'
+                  name: 'INT: CSV {#CSV.NAME} free space below {$INT.HV.CSV.PFREE.WARN:"{#CSV.NAME}"}%'
+                  opdata: 'Free: {{ITEM.LASTVALUE1}.fmtnum(1)}%'
+                  priority: AVERAGE
+                  dependencies:
+                    - name: 'INT: CSV {#CSV.NAME} free space below {$INT.HV.CSV.PFREE.CRIT:"{#CSV.NAME}"}%'
+                      expression: 'max(/INT MON-VIRT Hyper-V/int.hv.csv.pfree["{#CSV.NAME}"],15m)<{$INT.HV.CSV.PFREE.CRIT:"{#CSV.NAME}"} and nodata(/INT MON-VIRT Hyper-V/int.hv.csv.pfree["{#CSV.NAME}"],15m)=0'
+                  tags:
+                    - tag: scope
+                      value: capacity
+          master_item:
+            key: int.hv.cluster
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var d = JSON.parse(value);
+                  if (d.owner !== 1) {
+                      throw 'Not the cluster owner node.';
+                  }
+                  return JSON.stringify((d.csv || []).map(function (c) {
+                      return {'{#CSV.NAME}': c.name, '{#CSV.PATH}': c.path};
+                  }));
+              error_handler: DISCARD_VALUE
+        - uuid: 251b4ea17b754363a1cbc165f737ca9e
+          name: 'Hyper-V: Clustered VM roles discovery'
+          type: DEPENDENT
+          key: int.hv.roles.discovery
+          delay: '0'
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: db572290d95f428581e182e0abd9747a
+              name: 'Cluster role {#ROLE.NAME}: State'
+              type: DEPENDENT
+              key: 'int.hv.role.state["{#ROLE.NAME}"]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var d = JSON.parse(value);
+                      if (d.owner !== 1) {
+                          throw 'Not the cluster owner node.';
+                      }
+                      var r = (d.vm_roles || []).filter(function (x) { return x.name === '{#ROLE.NAME}'; })[0];
+                      return r ? r.state : 'Missing';
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: int.hv.cluster
+              tags:
+                - tag: component
+                  value: vm
+                - tag: vm
+                  value: '{#ROLE.NAME}'
+              trigger_prototypes:
+                - uuid: 5f8a16397cd942008e566e97c0d00863
+                  expression: 'count(/INT MON-VIRT Hyper-V/int.hv.role.state["{#ROLE.NAME}"],#3,"ne","Online")=3 and nodata(/INT MON-VIRT Hyper-V/int.hv.role.state["{#ROLE.NAME}"],15m)=0 and {$INT.HV.VM.CRITICAL:"{#ROLE.NAME}"}=1'
+                  name: 'INT: Clustered VM {#ROLE.NAME} is not online'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  tags:
+                    - tag: scope
+                      value: availability
+          master_item:
+            key: int.hv.cluster
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var d = JSON.parse(value);
+                  if (d.owner !== 1) {
+                      throw 'Not the cluster owner node.';
+                  }
+                  return JSON.stringify((d.vm_roles || []).map(function (r) {
+                      return {'{#ROLE.NAME}': r.name};
+                  }));
+              error_handler: DISCARD_VALUE
+        - uuid: a634a4651c83415e99d70362294776e0
+          name: 'Hyper-V: VMs discovery'
+          type: DEPENDENT
+          key: int.hv.vm.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#VM.NAME}'
+                value: '{$INT.HV.VM.MATCHES}'
+                formulaid: A
+              - macro: '{#VM.NAME}'
+                value: '{$INT.HV.VM.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: B
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'VMs currently on this host. Clustered VMs move between nodes; their state is checked through the cluster role.'
+          item_prototypes:
+            - uuid: e11a76a5a1ce4d788d389b9697c563f9
+              name: 'VM {#VM.NAME}: Oldest checkpoint age'
+              type: DEPENDENT
+              key: 'int.hv.vm.checkpoint.age[{#VM.ID}]'
+              delay: '0'
+              units: s
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.id==''{#VM.ID}'')].checkpoint_age.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: int.hv.vms
+              tags:
+                - tag: component
+                  value: vm
+                - tag: vm
+                  value: '{#VM.NAME}'
+              trigger_prototypes:
+                - uuid: 23242803ae5e4642b3fa6db03b0ce373
+                  expression: 'last(/INT MON-VIRT Hyper-V/int.hv.vm.checkpoint.age[{#VM.ID}])>{$INT.HV.CHECKPOINT.MAX.AGE:"{#VM.NAME}"} and nodata(/INT MON-VIRT Hyper-V/int.hv.vm.checkpoint.age[{#VM.ID}],15m)=0'
+                  name: 'INT: VM {#VM.NAME} has a checkpoint older than {$INT.HV.CHECKPOINT.MAX.AGE:"{#VM.NAME}"}'
+                  opdata: 'Oldest: {ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  description: 'AVHDX differencing disks grow and slow the VM; often left by a failed backup.'
+                  tags:
+                    - tag: scope
+                      value: capacity
+            - uuid: 365f490ddff64dbab888fac772603062
+              name: 'VM {#VM.NAME}: Replication health'
+              type: DEPENDENT
+              key: 'int.hv.vm.replication[{#VM.ID}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.id==''{#VM.ID}'')].replication.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: int.hv.vms
+              tags:
+                - tag: component
+                  value: vm
+                - tag: vm
+                  value: '{#VM.NAME}'
+              trigger_prototypes:
+                - uuid: 96a03b408aef43e0b78d6ec3ba6e88b8
+                  expression: 'find(/INT MON-VIRT Hyper-V/int.hv.vm.replication[{#VM.ID}],,"like","Critical")=1 and nodata(/INT MON-VIRT Hyper-V/int.hv.vm.replication[{#VM.ID}],15m)=0'
+                  name: 'INT: VM {#VM.NAME} Hyper-V Replica health is critical'
+                  priority: HIGH
+                  description: 'Replication stopped; the replica is out of date. Check Get-VMReplication / Hyper-V Manager → Replication.'
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: b5bdd3cd96ed4b93abb7c1312bccf0b4
+                  expression: 'find(/INT MON-VIRT Hyper-V/int.hv.vm.replication[{#VM.ID}],,"like","Warning")=1 and nodata(/INT MON-VIRT Hyper-V/int.hv.vm.replication[{#VM.ID}],15m)=0'
+                  name: 'INT: VM {#VM.NAME} Hyper-V Replica health is warning'
+                  priority: AVERAGE
+                  tags:
+                    - tag: scope
+                      value: availability
+            - uuid: dbd5d4bfa0e3443f98e122c04ed56654
+              name: 'VM {#VM.NAME}: State'
+              type: DEPENDENT
+              key: 'int.hv.vm.state[{#VM.ID}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.id==''{#VM.ID}'')].state.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: int.hv.vms
+              tags:
+                - tag: component
+                  value: vm
+                - tag: vm
+                  value: '{#VM.NAME}'
+              trigger_prototypes:
+                - uuid: 35a7fbf768944110a6885be1bea481ad
+                  expression: 'count(/INT MON-VIRT Hyper-V/int.hv.vm.state[{#VM.ID}],#3,"ne","Running")=3 and nodata(/INT MON-VIRT Hyper-V/int.hv.vm.state[{#VM.ID}],15m)=0 and {#VM.CLUSTERED}=0 and {$INT.HV.VM.CRITICAL:"{#VM.NAME}"}=1'
+                  name: 'INT: VM {#VM.NAME} is not running'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'Standalone (non-clustered) critical VM is off, saved or paused for 3 checks.'
+                  tags:
+                    - tag: scope
+                      value: availability
+          master_item:
+            key: int.hv.vms
+          lld_macro_paths:
+            - lld_macro: '{#VM.CLUSTERED}'
+              path: $.is_clustered
+            - lld_macro: '{#VM.ID}'
+              path: $.id
+            - lld_macro: '{#VM.NAME}'
+              path: $.name
+      tags:
+        - tag: service
+          value: MON-VIRT
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.HV.CHECKPOINT.MAX.AGE}'
+          value: 7d
+        - macro: '{$INT.HV.CSV.PFREE.CRIT}'
+          value: '5'
+        - macro: '{$INT.HV.CSV.PFREE.WARN}'
+          value: '15'
+        - macro: '{$INT.HV.VM.CRITICAL}'
+          value: '0'
+          description: 'Set {$INT.HV.VM.CRITICAL:"<vm name>"}=1 for every VM whose stop must alert (HIGH).'
+        - macro: '{$INT.HV.VM.MATCHES}'
+          value: '.+'
+        - macro: '{$INT.HV.VM.NOT_MATCHES}'
+          value: '^$'

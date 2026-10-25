@@ -1,0 +1,769 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 285aa027e7c24a8981ac7058cdd69e97
+      name: Templates/Integrit/MON-AD
+  templates:
+    - uuid: 96c9cb18c97b494ab3a369b0643c0ef6
+      template: 'INT MON-AD Domain controller'
+      name: 'INT MON-AD Domain controller'
+      description: |
+        Integrit MON-AD template for Active Directory domain controllers (Windows Server 2016-2025), Zabbix agent 2 active plus
+        port checks from the site proxy. No official Zabbix 7.0 AD template exists. Link on every DC next to INT MON-SRV Windows.
+        Per DC: core services, replication partners, SYSVOL / DFS-R, time offset to PDC, AD backup age, daily dcdiag, DS / DFSR events,
+        LDAP / LDAPS / Kerberos ports, domain SRV records. Domain-wide (PDC emulator only, no duplicates): privileged group changes,
+        krbtgt age, account lockout surge. Requires windows/int_mon_ad.conf and int_mon_ad.ps1 on the DC.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-AD
+      items:
+        - uuid: c443950cc4f04ad795bdf4d903b4eb1f
+          name: 'DC service NTDS (Active Directory Domain Services): State'
+          type: ZABBIX_ACTIVE
+          key: 'service.info[NTDS,state]'
+          delay: 1m
+          valuemap:
+            name: 'INT AD service state'
+          tags:
+            - tag: component
+              value: service
+          triggers:
+            - uuid: caa4bb25ad8040f1be6dd9c281720930
+              expression: 'min(/INT MON-AD Domain controller/service.info[NTDS,state],#3)<>0'
+              name: 'INT: DC service NTDS (Active Directory Domain Services) is not running'
+              priority: HIGH
+              description: 'Core domain controller service stopped for 3 checks.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 5cb2818c70264b0eb7f49ac24e98b1a3
+          name: 'DC service Netlogon (Netlogon): State'
+          type: ZABBIX_ACTIVE
+          key: 'service.info[Netlogon,state]'
+          delay: 1m
+          valuemap:
+            name: 'INT AD service state'
+          tags:
+            - tag: component
+              value: service
+          triggers:
+            - uuid: 932eccea5ac44336a7b7a4decda916a6
+              expression: 'min(/INT MON-AD Domain controller/service.info[Netlogon,state],#3)<>0'
+              name: 'INT: DC service Netlogon (Netlogon) is not running'
+              priority: HIGH
+              description: 'Core domain controller service stopped for 3 checks.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: d773bfc75e9945589529bae621951fc9
+          name: 'DC service Kdc (Kerberos Key Distribution Center): State'
+          type: ZABBIX_ACTIVE
+          key: 'service.info[Kdc,state]'
+          delay: 1m
+          valuemap:
+            name: 'INT AD service state'
+          tags:
+            - tag: component
+              value: service
+          triggers:
+            - uuid: c9f3fda94dee486dab67c80ea8b8917e
+              expression: 'min(/INT MON-AD Domain controller/service.info[Kdc,state],#3)<>0'
+              name: 'INT: DC service Kdc (Kerberos Key Distribution Center) is not running'
+              priority: HIGH
+              description: 'Core domain controller service stopped for 3 checks.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: c4275e5126ed4ba582eba7b4606f5979
+          name: 'DC service DNS (DNS Server): State'
+          type: ZABBIX_ACTIVE
+          key: 'service.info[DNS,state]'
+          delay: 1m
+          valuemap:
+            name: 'INT AD service state'
+          tags:
+            - tag: component
+              value: service
+          triggers:
+            - uuid: 25978e6657ee423cbd658c7a780c21c3
+              expression: 'min(/INT MON-AD Domain controller/service.info[DNS,state],#3)<>0'
+              name: 'INT: DC service DNS (DNS Server) is not running'
+              priority: HIGH
+              description: 'Core domain controller service stopped for 3 checks.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 4f1f4207ec564b73b804c5f70c27cefa
+          name: 'DC service DFSR (DFS Replication): State'
+          type: ZABBIX_ACTIVE
+          key: 'service.info[DFSR,state]'
+          delay: 1m
+          valuemap:
+            name: 'INT AD service state'
+          tags:
+            - tag: component
+              value: service
+          triggers:
+            - uuid: b4e202a94ce649818f8de08289d813f8
+              expression: 'min(/INT MON-AD Domain controller/service.info[DFSR,state],#3)<>0'
+              name: 'INT: DC service DFSR (DFS Replication) is not running'
+              priority: HIGH
+              description: 'Core domain controller service stopped for 3 checks.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: d716028c38354aedb11a37254f5e779b
+          name: 'DC service W32Time (Windows Time): State'
+          type: ZABBIX_ACTIVE
+          key: 'service.info[W32Time,state]'
+          delay: 1m
+          valuemap:
+            name: 'INT AD service state'
+          tags:
+            - tag: component
+              value: service
+          triggers:
+            - uuid: 5ad19be15d9c45e7a5eadbe3b1e124bc
+              expression: 'min(/INT MON-AD Domain controller/service.info[W32Time,state],#3)<>0'
+              name: 'INT: DC service W32Time (Windows Time) is not running'
+              priority: HIGH
+              description: 'Core domain controller service stopped for 3 checks.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 855ba56719a046eb88cb135da4722761
+          name: 'DC service ADWS (Active Directory Web Services): State'
+          type: ZABBIX_ACTIVE
+          key: 'service.info[ADWS,state]'
+          delay: 1m
+          valuemap:
+            name: 'INT AD service state'
+          tags:
+            - tag: component
+              value: service
+          triggers:
+            - uuid: bb644b95804945ce9c6168a13adbfbac
+              expression: 'min(/INT MON-AD Domain controller/service.info[ADWS,state],#3)<>0'
+              name: 'INT: DC service ADWS (Active Directory Web Services) is not running'
+              priority: HIGH
+              description: 'Core domain controller service stopped for 3 checks.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: c5f38d0f01be4764ae3d46b4baee3074
+          name: 'AD: Get backup age'
+          type: ZABBIX_ACTIVE
+          key: int.ad.backup
+          delay: 6h
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 1m
+          description: 'Age of the last AD backup (dSASignature of the domain NC).'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: fbd0391d19144b43ad9e07ea6191c1a0
+          name: 'AD: Last AD backup age'
+          type: DEPENDENT
+          key: int.ad.backup.age
+          delay: '0'
+          units: s
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.age'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.ad.backup
+          tags:
+            - tag: component
+              value: ad
+          triggers:
+            - uuid: ddd52a002a6046a5b78dc8b92c66daa2
+              expression: 'last(/INT MON-AD Domain controller/int.ad.backup.age)>{$INT.AD.BACKUP.MAXAGE}'
+              name: 'INT: Active Directory not backed up for {$INT.AD.BACKUP.MAXAGE}'
+              opdata: 'Age: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'No system state / AD-aware backup of this DC. A forest recovery would be impossible or lose data (tombstone lifetime).'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 22f057f727744f069bc3490e417510b3
+          name: 'AD: Get dcdiag'
+          type: ZABBIX_ACTIVE
+          key: int.ad.dcdiag
+          delay: 24h
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 5m
+          description: 'dcdiag /q once a day.'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 0340028f102c4518b6cc066d03eca8e6
+          name: 'AD: dcdiag failed tests'
+          type: DEPENDENT
+          key: int.ad.dcdiag.failed
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.failed'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.ad.dcdiag
+          tags:
+            - tag: component
+              value: ad
+          triggers:
+            - uuid: 25064ac81f6043eda641dac4eb4fedbe
+              expression: 'last(/INT MON-AD Domain controller/int.ad.dcdiag.failed)>0'
+              name: 'INT: dcdiag reports {ITEM.LASTVALUE1} failed test(s)'
+              priority: AVERAGE
+              description: 'Run dcdiag /q on the DC for details. First failures: see item "AD: dcdiag detail".'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: 219c049c6527408683318ad22b0becec
+              expression: 'nodata(/INT MON-AD Domain controller/int.ad.dcdiag.failed,{$INT.AD.DCDIAG.NODATA})=1'
+              name: 'INT: Daily dcdiag did not run for {$INT.AD.DCDIAG.NODATA}'
+              priority: AVERAGE
+              description: 'The dcdiag check returns nothing (timeout, script error, agent problem).'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 4751318cd78c4ec7a2bd62c56bdaf88a
+          name: 'AD: dcdiag detail'
+          type: DEPENDENT
+          key: int.ad.dcdiag.detail
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.detail'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.ad.dcdiag
+          tags:
+            - tag: component
+              value: ad
+        - uuid: e87c0f7cc65a4896b10d215b8058fb1e
+          name: 'AD: Domain SRV records resolvable'
+          type: ZABBIX_ACTIVE
+          key: 'net.dns[,_ldap._tcp.dc._msdcs.{$INT.AD.DOMAIN},SRV]'
+          delay: 5m
+          valuemap:
+            name: 'INT AD yes/no'
+          description: 'The DC resolves the domain controller SRV records (clients use them to find a DC).'
+          tags:
+            - tag: component
+              value: dns
+          triggers:
+            - uuid: b3eef5310efb444aa757f92ff7855b6e
+              expression: 'max(/INT MON-AD Domain controller/net.dns[,_ldap._tcp.dc._msdcs.{$INT.AD.DOMAIN},SRV],#3)=0'
+              name: 'INT: Domain SRV records for {$INT.AD.DOMAIN} cannot be resolved'
+              priority: HIGH
+              description: 'Clients cannot locate domain controllers: logons, GPO and Kerberos fail. Check DNS Server service and the _msdcs zone.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: f8498d4854bc4363982f0d070ff4e62c
+          name: 'AD: Event log DFS Replication errors'
+          type: ZABBIX_ACTIVE
+          key: 'eventlog["DFS Replication",,"^(?:Error|Warning)$",,"{$INT.AD.EVENTID.DFSR}",,skip]'
+          delay: 1m
+          history: 31d
+          value_type: LOG
+          trends: '0'
+          tags:
+            - tag: component
+              value: eventlog
+          triggers:
+            - uuid: 4b0fc3714d5d42beabf7cdc162d10c1a
+              expression: 'count(/INT MON-AD Domain controller/eventlog["DFS Replication",,"^(?:Error|Warning)$",,"{$INT.AD.EVENTID.DFSR}",,skip],1h)>0'
+              name: 'INT: DFS Replication (SYSVOL) problem event'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Event IDs {$INT.AD.EVENTID.DFSR} (e.g. 2213 replication stopped after dirty shutdown, 4012 content freshness, 5002/5008 partner unreachable).'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: c30b71370e4c4fccbcf2278080a8cb40
+          name: 'AD: Event log Directory Service errors'
+          type: ZABBIX_ACTIVE
+          key: 'eventlog["Directory Service",,"^(?:Error|Warning)$",,"{$INT.AD.EVENTID.DS}",,skip]'
+          delay: 1m
+          history: 31d
+          value_type: LOG
+          trends: '0'
+          tags:
+            - tag: component
+              value: eventlog
+          triggers:
+            - uuid: 9de8ff8c044c4ba3b3dac24312f222ab
+              expression: 'count(/INT MON-AD Domain controller/eventlog["Directory Service",,"^(?:Error|Warning)$",,"{$INT.AD.EVENTID.DS}",,skip],1h)>0'
+              name: 'INT: Directory Service problem event'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Event IDs {$INT.AD.EVENTID.DS} (e.g. 1311/1388/1988 replication topology / lingering objects, 2042 tombstone lifetime exceeded, 1925 replication link failed).'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 58e641bd39324ab39f4b7f794be8bc77
+          name: 'AD: Get domain data (PDC only)'
+          type: ZABBIX_ACTIVE
+          key: int.ad.pdc
+          delay: 15m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 2m
+          description: 'Privileged groups, krbtgt, locked accounts. Only the PDC emulator returns data.'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: fdaf9e2117e346338a32d8197a9132aa
+          name: 'AD: krbtgt password age'
+          type: DEPENDENT
+          key: int.ad.krbtgt.days
+          delay: '0'
+          units: d
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.krbtgt_days'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.ad.pdc
+          tags:
+            - tag: component
+              value: ad
+          triggers:
+            - uuid: dec0d17a979744159231886aca27c1a1
+              expression: 'last(/INT MON-AD Domain controller/int.ad.krbtgt.days)>{$INT.AD.KRBTGT.MAX.DAYS} and nodata(/INT MON-AD Domain controller/int.ad.krbtgt.days,1h)=0'
+              name: 'INT: krbtgt password is {ITEM.LASTVALUE1} days old'
+              priority: WARNING
+              description: 'Reset krbtgt twice (with replication in between) using the Microsoft New-KrbtgtKeys script. Report item.'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 972076ad33c04a15948e3fac00b39313
+          name: 'AD: Locked-out accounts'
+          type: DEPENDENT
+          key: int.ad.locked
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.locked'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.ad.pdc
+          tags:
+            - tag: component
+              value: ad
+          triggers:
+            - uuid: b3aefa2021f24a8fa492aa0238dd9ed6
+              expression: 'last(/INT MON-AD Domain controller/int.ad.locked)-min(/INT MON-AD Domain controller/int.ad.locked,15m)>{$INT.AD.LOCKOUT.SURGE} and nodata(/INT MON-AD Domain controller/int.ad.locked,1h)=0'
+              name: 'INT: More than {$INT.AD.LOCKOUT.SURGE} accounts locked out within 15 min'
+              priority: WARNING
+              description: 'Password spraying / brute force, or a service using an old password. Check Security log 4740 on the PDC.'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: d3541a524b954cc2b0527ee0abb1ec45
+          name: 'AD: Get replication'
+          type: ZABBIX_ACTIVE
+          key: int.ad.repl
+          delay: 5m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 1m
+          description: 'Replication partners of this DC.'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 87b42036ba66404287a7bf9f34e34f0e
+          name: 'AD: Get SYSVOL'
+          type: ZABBIX_ACTIVE
+          key: int.ad.sysvol
+          delay: 5m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 30s
+          description: 'SYSVOL / NETLOGON shares and DFS-R state.'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 9ecf9095052d49f9b1fff5ee881babec
+          name: 'AD: SYSVOL DFS-R state'
+          type: DEPENDENT
+          key: int.ad.sysvol.dfsr
+          delay: '0'
+          valuemap:
+            name: 'INT AD DFSR state'
+          description: '4 = Normal. -1 = SYSVOL replicated by FRS or not found.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.dfsr_state'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.ad.sysvol
+          tags:
+            - tag: component
+              value: ad
+          triggers:
+            - uuid: 885e04f3c3d149288d9a8c5ff99ecab6
+              expression: 'min(/INT MON-AD Domain controller/int.ad.sysvol.dfsr,#3)>=0 and last(/INT MON-AD Domain controller/int.ad.sysvol.dfsr)<>4'
+              name: 'INT: SYSVOL DFS-R state is not Normal'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'SYSVOL replication is initialising, in recovery or in error: group policies and logon scripts diverge between DCs.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: ab5d10b6866940c2a0a28ee702b4dee9
+          name: 'AD: SYSVOL and NETLOGON shared'
+          type: DEPENDENT
+          key: int.ad.sysvol.shares
+          delay: '0'
+          description: '2 = both shares present.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.shares'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.ad.sysvol
+          tags:
+            - tag: component
+              value: ad
+          triggers:
+            - uuid: 7dff0c45363a45ab8eb69e599dbc95f1
+              expression: 'max(/INT MON-AD Domain controller/int.ad.sysvol.shares,#3)<2'
+              name: 'INT: SYSVOL / NETLOGON share missing'
+              priority: HIGH
+              description: 'The DC does not advertise SYSVOL / NETLOGON: clients cannot process group policies from it.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 75ad52dfb83f458d89e876dcb1bf9224
+          name: 'AD: Get time offset to PDC'
+          type: ZABBIX_ACTIVE
+          key: int.ad.time
+          delay: 5m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 30s
+          description: 'w32tm offset to the PDC emulator.'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 5589c28c4e334817aac331db5019cc23
+          name: 'AD: Time offset to PDC'
+          type: DEPENDENT
+          key: int.ad.time.offset
+          delay: '0'
+          value_type: FLOAT
+          units: s
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.offset'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.ad.time
+          tags:
+            - tag: component
+              value: ad
+          triggers:
+            - uuid: 50ea960440c84eaf835194100b5d189a
+              expression: 'abs(last(/INT MON-AD Domain controller/int.ad.time.offset))>{$INT.AD.TIME.OFFSET.CRIT}'
+              name: 'INT: DC clock differs from PDC by more than {$INT.AD.TIME.OFFSET.CRIT}s'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'Kerberos fails at 300 s difference: logons and replication break.'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: 4eeb457c5c7e41239f21c5780f9eb1b4
+              expression: 'abs(last(/INT MON-AD Domain controller/int.ad.time.offset))>{$INT.AD.TIME.OFFSET.WARN}'
+              name: 'INT: DC clock differs from PDC by more than {$INT.AD.TIME.OFFSET.WARN}s'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              dependencies:
+                - name: 'INT: DC clock differs from PDC by more than {$INT.AD.TIME.OFFSET.CRIT}s'
+                  expression: 'abs(last(/INT MON-AD Domain controller/int.ad.time.offset))>{$INT.AD.TIME.OFFSET.CRIT}'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 1038ad62355a40a9b799ce468e666ce5
+          name: 'AD: LDAP 389 reachable from proxy'
+          type: SIMPLE
+          key: 'net.tcp.service[ldap]'
+          delay: 1m
+          tags:
+            - tag: component
+              value: network
+          triggers:
+            - uuid: aa4d77a5f2de4d07a71852b6ca9464bf
+              expression: 'max(/INT MON-AD Domain controller/net.tcp.service[ldap],#3)=0'
+              name: 'INT: LDAP 389 on the DC not reachable'
+              priority: HIGH
+              description: 'Port check from the site proxy to the host interface failed 3 times.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 110aaac7b3b94c79a5ea8fc47d62f3e0
+          name: 'AD: LDAPS 636 reachable from proxy'
+          type: SIMPLE
+          key: 'net.tcp.service[tcp,,636]'
+          delay: 1m
+          tags:
+            - tag: component
+              value: network
+          triggers:
+            - uuid: 5bc6d4f6d5334224b9b4b95725a1b999
+              expression: 'max(/INT MON-AD Domain controller/net.tcp.service[tcp,,636],#3)=0 and {$INT.AD.LDAPS.CHECK}=1'
+              name: 'INT: LDAPS 636 on the DC not reachable'
+              priority: HIGH
+              description: 'Port check from the site proxy to the host interface failed 3 times. Without a DC certificate LDAPS is closed: set {$INT.AD.LDAPS.CHECK}=0.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: eb997be7f69145d4abe6ef9b9f5f2aa7
+          name: 'AD: Kerberos 88 reachable from proxy'
+          type: SIMPLE
+          key: 'net.tcp.service[tcp,,88]'
+          delay: 1m
+          tags:
+            - tag: component
+              value: network
+          triggers:
+            - uuid: 0bb3acc93df343dcba13a3026b2abab6
+              expression: 'max(/INT MON-AD Domain controller/net.tcp.service[tcp,,88],#3)=0'
+              name: 'INT: Kerberos 88 on the DC not reachable'
+              priority: HIGH
+              description: 'Port check from the site proxy to the host interface failed 3 times.'
+              tags:
+                - tag: scope
+                  value: availability
+      discovery_rules:
+        - uuid: 8b3d47301deb4f8bb15d806f0a33e195
+          name: 'AD: Privileged groups'
+          type: DEPENDENT
+          key: int.ad.groups.discovery
+          delay: '0'
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: 6775cf6a6e0b42639371d96adbdf370a
+              name: 'Group {#GROUP}: Members'
+              type: DEPENDENT
+              key: 'int.ad.group.members["{#GROUP}"]'
+              delay: '0'
+              history: 365d
+              value_type: TEXT
+              trends: '0'
+              description: 'Sorted list of (recursive) members. The history shows who was added / removed and when.'
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var d = JSON.parse(value);
+                      if (d.pdc !== 1) {
+                          throw 'Not the PDC emulator.';
+                      }
+                      var g = d.groups.filter(function (x) { return x.group === '{#GROUP}'; })[0];
+                      if (!g || g.count < 0) {
+                          throw 'Group not readable: ' + (g ? g.members : 'missing');
+                      }
+                      return g.members;
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1d
+              master_item:
+                key: int.ad.pdc
+              tags:
+                - tag: component
+                  value: groups
+                - tag: group
+                  value: '{#GROUP}'
+              trigger_prototypes:
+                - uuid: 4fefe0cb00994a17bfb1a3f343005ab9
+                  expression: 'change(/INT MON-AD Domain controller/int.ad.group.members["{#GROUP}"])=1 and {$INT.AD.GROUP.HIGH:"{#GROUP}"}=1'
+                  name: 'INT: Membership of {#GROUP} changed'
+                  opdata: 'Now: {ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  recovery_mode: NONE
+                  manual_close: 'YES'
+                  description: 'Compare with the change ticket. History of the item shows old and new member list. Close manually after review.'
+                  tags:
+                    - tag: scope
+                      value: security
+                - uuid: 1af7501adfdb40579ece67561587f887
+                  expression: 'change(/INT MON-AD Domain controller/int.ad.group.members["{#GROUP}"])=1 and {$INT.AD.GROUP.HIGH:"{#GROUP}"}=0'
+                  name: 'INT: Membership of {#GROUP} changed'
+                  opdata: 'Now: {ITEM.LASTVALUE1}'
+                  priority: AVERAGE
+                  recovery_mode: NONE
+                  manual_close: 'YES'
+                  description: 'Compare with the change ticket. History of the item shows old and new member list. Close manually after review.'
+                  tags:
+                    - tag: scope
+                      value: security
+          master_item:
+            key: int.ad.pdc
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var d = JSON.parse(value);
+                  if (d.pdc !== 1) {
+                      throw 'Not the PDC emulator.';
+                  }
+                  return JSON.stringify(d.groups.map(function (g) { return {'{#GROUP}': g.group}; }));
+              error_handler: DISCARD_VALUE
+        - uuid: 77dfe4dafe6c42cf82dd93d056de5e48
+          name: 'AD: Replication partners'
+          type: DEPENDENT
+          key: int.ad.repl.discovery
+          delay: '0'
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: b0b7aa05e443431bbce4856a3c0fa358
+              name: 'Replication {#PARTNER} ({#NC}): Consecutive failures'
+              type: DEPENDENT
+              key: 'int.ad.repl.failures["{#KEY}"]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.key==''{#KEY}'')].failures.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: int.ad.repl
+              tags:
+                - tag: component
+                  value: replication
+                - tag: partner
+                  value: '{#PARTNER}'
+            - uuid: 1e75d41fdaec44189415a6f56a3144c0
+              name: 'Replication {#PARTNER} ({#NC}): Last success age'
+              type: DEPENDENT
+              key: 'int.ad.repl.age["{#KEY}"]'
+              delay: '0'
+              units: s
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.key==''{#KEY}'')].age.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: int.ad.repl
+              tags:
+                - tag: component
+                  value: replication
+                - tag: partner
+                  value: '{#PARTNER}'
+          trigger_prototypes:
+            - uuid: a19163f2f317469fb410fcb2465c0373
+              expression: 'min(/INT MON-AD Domain controller/int.ad.repl.failures["{#KEY}"],{$INT.AD.REPL.FAIL.PERIOD})>=1 or last(/INT MON-AD Domain controller/int.ad.repl.age["{#KEY}"])>{$INT.AD.REPL.MAXAGE}'
+              name: 'INT: AD replication from {#PARTNER} failing ({#NC})'
+              opdata: 'Failures: {ITEM.LASTVALUE1}, last success {ITEM.LASTVALUE2} ago'
+              priority: HIGH
+              description: 'Run repadmin /showrepl and repadmin /replsummary on the DC. Long outages lead to lingering objects (tombstone lifetime).'
+              tags:
+                - tag: scope
+                  value: availability
+          master_item:
+            key: int.ad.repl
+          lld_macro_paths:
+            - lld_macro: '{#KEY}'
+              path: $.key
+            - lld_macro: '{#NC}'
+              path: $.nc
+            - lld_macro: '{#PARTNER}'
+              path: $.partner
+      tags:
+        - tag: service
+          value: MON-AD
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.AD.BACKUP.MAXAGE}'
+          value: 7d
+        - macro: '{$INT.AD.DCDIAG.NODATA}'
+          value: 26h
+        - macro: '{$INT.AD.DOMAIN}'
+          description: 'DNS name of the AD domain, e.g. acme.local.'
+        - macro: '{$INT.AD.EVENTID.DFSR}'
+          value: '^(2213|4012|5002|5008|5014)$'
+        - macro: '{$INT.AD.EVENTID.DS}'
+          value: '^(1311|1388|1925|1988|2042|2087|2088)$'
+        - macro: '{$INT.AD.GROUP.HIGH}'
+          value: '0'
+          description: '1 = membership change is HIGH (context per group).'
+        - macro: '{$INT.AD.GROUP.HIGH:"Enterprise Admins"}'
+          value: '1'
+        - macro: '{$INT.AD.GROUP.HIGH:"Schema Admins"}'
+          value: '1'
+        - macro: '{$INT.AD.KRBTGT.MAX.DAYS}'
+          value: '180'
+        - macro: '{$INT.AD.LDAPS.CHECK}'
+          value: '1'
+          description: '0 when the DC has no certificate (LDAPS port closed by design).'
+        - macro: '{$INT.AD.LOCKOUT.SURGE}'
+          value: '10'
+        - macro: '{$INT.AD.REPL.FAIL.PERIOD}'
+          value: 60m
+        - macro: '{$INT.AD.REPL.MAXAGE}'
+          value: 3h
+        - macro: '{$INT.AD.TIME.OFFSET.CRIT}'
+          value: '240'
+        - macro: '{$INT.AD.TIME.OFFSET.WARN}'
+          value: '60'
+      valuemaps:
+        - uuid: 2c2790510a9149e8bdde2eefc34af3f1
+          name: 'INT AD DFSR state'
+          mappings:
+            - value: '-1'
+              newvalue: 'Not found / FRS'
+            - value: '0'
+              newvalue: Uninitialized
+            - value: '1'
+              newvalue: Initialized
+            - value: '2'
+              newvalue: 'Initial sync'
+            - value: '3'
+              newvalue: 'Auto recovery'
+            - value: '4'
+              newvalue: Normal
+            - value: '5'
+              newvalue: 'In error'
+        - uuid: 66814fc7db4f4092a5da54ee9f92f005
+          name: 'INT AD service state'
+          mappings:
+            - value: '0'
+              newvalue: Running
+            - value: '6'
+              newvalue: Stopped
+            - value: '255'
+              newvalue: 'No such service'
+        - uuid: 595155f803d149cb8557500f89dd2d3a
+          name: 'INT AD yes/no'
+          mappings:
+            - value: '0'
+              newvalue: 'No'
+            - value: '1'
+              newvalue: 'Yes'

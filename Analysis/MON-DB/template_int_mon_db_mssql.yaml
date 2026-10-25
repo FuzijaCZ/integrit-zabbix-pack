@@ -1,0 +1,535 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 5cb950fb7da04006a78d4920023b5504
+      name: Templates/Integrit/MON-DB
+  templates:
+    - uuid: 2fa98229ee1d483b86b774fa44d1b70f
+      template: 'INT MON-DB MSSQL'
+      name: 'INT MON-DB MSSQL'
+      description: |
+        Integrit MON-DB template for Microsoft SQL Server 2017-2025 incl. Express, Zabbix agent 2 MSSQL plugin (7.0.10+) in ACTIVE mode.
+        The official 'MSSQL by Zabbix agent 2' uses passive items only, while Integrit agents are active-only; this template uses the
+        same plugin keys as active items, limited to what draft 5.6.6 alerts on: instance down, database not online, backup age per
+        database (independent of MON-BKP, catches databases nobody added to a backup), Express size limit, log usage, SQL Agent job
+        failures, blocking and deadlocks. Link on the MON-SRV Windows host of the SQL server.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-DB
+      items:
+        - uuid: bdf36d61c6a44ad5b3af011e658800ba
+          name: 'MSSQL: Deadlocks per second'
+          type: DEPENDENT
+          key: int.mssql.deadlocks.rate
+          delay: '0'
+          value_type: FLOAT
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$[?(@.object_name=~''.*Locks'' && @.counter_name==''Number of Deadlocks/sec'' && @.instance_name==''_Total'')].cntr_value.first()'
+            - type: CHANGE_PER_SECOND
+              parameters:
+                - ''
+          master_item:
+            key: 'mssql.perfcounter.get["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"]'
+          tags:
+            - tag: component
+              value: locks
+          triggers:
+            - uuid: c2bbad4edeee49ff8a54c0f7c1af33d8
+              expression: 'min(/INT MON-DB MSSQL/int.mssql.deadlocks.rate,15m)>0'
+              name: 'INT: MSSQL deadlocks for 15 min'
+              priority: WARNING
+              description: 'Deadlocks every minute for 15 minutes: an application or index problem. Tell the application vendor.'
+              tags:
+                - tag: scope
+                  value: performance
+        - uuid: 363366916ab442cbb48a0934319a1188
+          name: 'MSSQL: Express edition'
+          type: DEPENDENT
+          key: int.mssql.express
+          delay: '0'
+          valuemap:
+            name: 'INT MSSQL yes/no'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - 'return /Express Edition/i.test(value) ? 1 : 0;'
+          master_item:
+            key: 'mssql.version["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"]'
+          tags:
+            - tag: component
+              value: system
+        - uuid: 17552478f3204cf494ad595d4989fe55
+          name: 'MSSQL: Get backups'
+          type: ZABBIX_ACTIVE
+          key: 'mssql.last.backup.get["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"]'
+          delay: 10m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 30s
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 50b79e41ec4746e9979f5fb105138bb3
+          name: 'MSSQL: Get databases'
+          type: ZABBIX_ACTIVE
+          key: 'mssql.db.get["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"]'
+          delay: 1h
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 30s
+          tags:
+            - tag: component
+              value: raw
+        - uuid: cedf8a4a69d04f21b2afe1745becc1f5
+          name: 'MSSQL: Get jobs'
+          type: ZABBIX_ACTIVE
+          key: 'mssql.job.status.get["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"]'
+          delay: 10m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 30s
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 133a75cc8a054fb7a70078e7fe3dec3e
+          name: 'MSSQL: Get performance counters'
+          type: ZABBIX_ACTIVE
+          key: 'mssql.perfcounter.get["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"]'
+          delay: 1m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 30s
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 4875929a78f14f2c94edd8205ad70afe
+          name: 'MSSQL: Ping'
+          type: ZABBIX_ACTIVE
+          key: 'mssql.ping["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"]'
+          delay: 1m
+          valuemap:
+            name: 'INT MSSQL ping'
+          description: '1 = the plugin can log in and run a query.'
+          tags:
+            - tag: component
+              value: system
+        - uuid: 10f562bbaad84497bbadb51da48316a4
+          name: 'MSSQL: Processes blocked'
+          type: DEPENDENT
+          key: int.mssql.blocked
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$[?(@.object_name=~''.*General Statistics'' && @.counter_name==''Processes blocked'')].cntr_value.first()'
+          master_item:
+            key: 'mssql.perfcounter.get["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"]'
+          tags:
+            - tag: component
+              value: locks
+          triggers:
+            - uuid: ad7e23e16c1749a5bbb79517225f46b7
+              expression: 'min(/INT MON-DB MSSQL/int.mssql.blocked,{$INT.MSSQL.BLOCKING.PERIOD})>0'
+              name: 'INT: MSSQL sessions blocked for {$INT.MSSQL.BLOCKING.PERIOD}'
+              opdata: 'Blocked: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Users of the application wait. Often a long transaction or index maintenance; check sp_who2 / Activity Monitor.'
+              tags:
+                - tag: scope
+                  value: performance
+        - uuid: 4179804263514ea5a85571b7722a8304
+          name: 'MSSQL: Version'
+          type: ZABBIX_ACTIVE
+          key: 'mssql.version["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"]'
+          delay: 1h
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: component
+              value: system
+      discovery_rules:
+        - uuid: 0ab1a21761f94a998d525f575deb89f2
+          name: 'MSSQL: Databases'
+          type: DEPENDENT
+          key: int.mssql.db.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#DBNAME}'
+                value: '{$INT.MSSQL.DBNAME.MATCHES}'
+                formulaid: A
+              - macro: '{#DBNAME}'
+                value: '{$INT.MSSQL.DBNAME.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: B
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: d5a8ee9fa1d24bbaa3e448bbb8b434fc
+              name: 'DB {#DBNAME}: Last full backup age'
+              type: DEPENDENT
+              key: 'int.mssql.backup.full["{#DBNAME}"]'
+              delay: '0'
+              units: s
+              description: 'Time since the last full backup recorded in msdb. 99999999 = no full backup ever.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.dbname==''{#DBNAME}'' && @.type==''D'')].time_since_last_backup.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '99999999'
+              master_item:
+                key: 'mssql.last.backup.get["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"]'
+              tags:
+                - tag: component
+                  value: backup
+                - tag: database
+                  value: '{#DBNAME}'
+              trigger_prototypes:
+                - uuid: c933173c6d5844f694b475687a7ba4df
+                  expression: 'last(/INT MON-DB MSSQL/int.mssql.backup.full["{#DBNAME}"])>{$INT.MSSQL.BACKUP.FULL.MAXAGE:"{#DBNAME}"}'
+                  name: 'INT: MSSQL database {#DBNAME}: last full backup older than {$INT.MSSQL.BACKUP.FULL.MAXAGE:"{#DBNAME}"}'
+                  opdata: 'Age: {ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'Includes databases that were never backed up (age 99999999 s). Weekly / monthly backups: set the macro with database context.'
+                  tags:
+                    - tag: scope
+                      value: availability
+            - uuid: 27eb9acfd4e24135b7a01f8d47db4d9e
+              name: 'DB {#DBNAME}: Last log backup age'
+              type: DEPENDENT
+              key: 'int.mssql.backup.log["{#DBNAME}"]'
+              delay: '0'
+              units: s
+              description: '99999999 = no log backup ever.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.dbname==''{#DBNAME}'' && @.type==''L'')].time_since_last_backup.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '99999999'
+              master_item:
+                key: 'mssql.last.backup.get["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"]'
+              tags:
+                - tag: component
+                  value: backup
+                - tag: database
+                  value: '{#DBNAME}'
+            - uuid: 83797599b563433b85449479162948e1
+              name: 'DB {#DBNAME}: Data files size'
+              type: DEPENDENT
+              key: 'int.mssql.db.data.size["{#DBNAME}"]'
+              delay: '0'
+              units: B
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.object_name=~''.*Databases'' && @.instance_name==''{#DBNAME}'' && @.counter_name==''Data File(s) Size (KB)'')].cntr_value.first()'
+                  error_handler: DISCARD_VALUE
+                - type: MULTIPLIER
+                  parameters:
+                    - '1024'
+              master_item:
+                key: 'mssql.perfcounter.get["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"]'
+              tags:
+                - tag: component
+                  value: database
+                - tag: database
+                  value: '{#DBNAME}'
+              trigger_prototypes:
+                - uuid: ca3e641feee448f3b73e1a4a36b70181
+                  expression: 'last(/INT MON-DB MSSQL/int.mssql.express)=1 and last(/INT MON-DB MSSQL/int.mssql.db.data.size["{#DBNAME}"])>{$INT.MSSQL.EXPRESS.LIMIT}*{$INT.MSSQL.EXPRESS.PUSED.CRIT}/100'
+                  name: 'INT: MSSQL Express database {#DBNAME} above {$INT.MSSQL.EXPRESS.PUSED.CRIT}% of the size limit'
+                  opdata: 'Data: {ITEM.LASTVALUE2}'
+                  priority: HIGH
+                  description: 'At the Express limit ({$INT.MSSQL.EXPRESS.LIMIT} data per database) the application stops writing. Archive data or upgrade the edition.'
+                  tags:
+                    - tag: scope
+                      value: capacity
+                - uuid: e07449ce64a742af95da2cd13b5f3a9c
+                  expression: 'last(/INT MON-DB MSSQL/int.mssql.express)=1 and last(/INT MON-DB MSSQL/int.mssql.db.data.size["{#DBNAME}"])>{$INT.MSSQL.EXPRESS.LIMIT}*{$INT.MSSQL.EXPRESS.PUSED.WARN}/100'
+                  name: 'INT: MSSQL Express database {#DBNAME} above {$INT.MSSQL.EXPRESS.PUSED.WARN}% of the size limit'
+                  opdata: 'Data: {ITEM.LASTVALUE2}'
+                  priority: AVERAGE
+                  dependencies:
+                    - name: 'INT: MSSQL Express database {#DBNAME} above {$INT.MSSQL.EXPRESS.PUSED.CRIT}% of the size limit'
+                      expression: 'last(/INT MON-DB MSSQL/int.mssql.express)=1 and last(/INT MON-DB MSSQL/int.mssql.db.data.size["{#DBNAME}"])>{$INT.MSSQL.EXPRESS.LIMIT}*{$INT.MSSQL.EXPRESS.PUSED.CRIT}/100'
+                  tags:
+                    - tag: scope
+                      value: capacity
+            - uuid: ce904dd2dcf345cb8e1a11df1d8973c0
+              name: 'DB {#DBNAME}: Log used, in %'
+              type: DEPENDENT
+              key: 'int.mssql.db.log.pused["{#DBNAME}"]'
+              delay: '0'
+              units: '%'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.object_name=~''.*Databases'' && @.instance_name==''{#DBNAME}'' && @.counter_name==''Percent Log Used'')].cntr_value.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: 'mssql.perfcounter.get["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"]'
+              tags:
+                - tag: component
+                  value: database
+                - tag: database
+                  value: '{#DBNAME}'
+              trigger_prototypes:
+                - uuid: 1031bebf605642fcbb2c03aa13c5e9d5
+                  expression: 'min(/INT MON-DB MSSQL/int.mssql.db.log.pused["{#DBNAME}"],30m)>{$INT.MSSQL.LOG.PUSED.MAX:"{#DBNAME}"}'
+                  name: 'INT: MSSQL database {#DBNAME}: transaction log {ITEM.LASTVALUE1} used'
+                  priority: WARNING
+                  description: 'Log is not being truncated (missing log backup in FULL model, long transaction, replication). It will grow until the disk is full.'
+                  tags:
+                    - tag: scope
+                      value: capacity
+            - uuid: f78f102446a9479db891cb85bc61ee95
+              name: 'DB {#DBNAME}: Recovery model'
+              type: DEPENDENT
+              key: 'int.mssql.db.recovery_model["{#DBNAME}"]'
+              delay: '0'
+              valuemap:
+                name: 'INT MSSQL recovery model'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.dbname==''{#DBNAME}'')].db_recovery_model.first()'
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1d
+              master_item:
+                key: 'mssql.last.backup.get["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"]'
+              tags:
+                - tag: component
+                  value: database
+                - tag: database
+                  value: '{#DBNAME}'
+            - uuid: 4190c7b076554438b75f552850c5948b
+              name: 'DB {#DBNAME}: State'
+              type: DEPENDENT
+              key: 'int.mssql.db.state["{#DBNAME}"]'
+              delay: '0'
+              valuemap:
+                name: 'INT MSSQL DB state'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.object_name=~''.*Databases'' && @.instance_name==''{#DBNAME}'' && @.counter_name==''State'')].cntr_value.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: 'mssql.perfcounter.get["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"]'
+              tags:
+                - tag: component
+                  value: database
+                - tag: database
+                  value: '{#DBNAME}'
+              trigger_prototypes:
+                - uuid: 610d7b7d43bd469eb22ef074254e3b4d
+                  expression: 'min(/INT MON-DB MSSQL/int.mssql.db.state["{#DBNAME}"],#3)>0'
+                  name: 'INT: MSSQL database {#DBNAME} is not ONLINE'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'SUSPECT / RECOVERY_PENDING / OFFLINE: the application cannot use the database.'
+                  tags:
+                    - tag: scope
+                      value: availability
+          trigger_prototypes:
+            - uuid: 9c49e8840407463386651c1a4e3494e0
+              expression: 'last(/INT MON-DB MSSQL/int.mssql.backup.log["{#DBNAME}"])>{$INT.MSSQL.BACKUP.LOG.MAXAGE:"{#DBNAME}"} and last(/INT MON-DB MSSQL/int.mssql.db.recovery_model["{#DBNAME}"])=1'
+              name: 'INT: MSSQL database {#DBNAME} (FULL recovery): last log backup older than {$INT.MSSQL.BACKUP.LOG.MAXAGE:"{#DBNAME}"}'
+              priority: AVERAGE
+              description: 'FULL recovery model without regular log backups: point-in-time restore is impossible and the log grows without limit. Back up the log or switch to SIMPLE.'
+              tags:
+                - tag: scope
+                  value: availability
+          master_item:
+            key: 'mssql.db.get["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"]'
+          lld_macro_paths:
+            - lld_macro: '{#DBNAME}'
+              path: $.dbname
+        - uuid: 6f29d949ebd04637b18b872f23b3d434
+          name: 'MSSQL: SQL Agent jobs'
+          type: DEPENDENT
+          key: int.mssql.job.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#JOBNAME}'
+                value: '{$INT.MSSQL.JOB.MATCHES}'
+                formulaid: A
+              - macro: '{#JOBNAME}'
+                value: '{$INT.MSSQL.JOB.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: B
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: a59db831228a4efa9b47bc47d3c14954
+              name: 'Job {#JOBNAME}: Last run status'
+              type: DEPENDENT
+              key: 'int.mssql.job.runstatus["{#JOBNAME}"]'
+              delay: '0'
+              valuemap:
+                name: 'INT MSSQL job run status'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.job_name==''{#JOBNAME}'')].run_status.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: 'mssql.job.status.get["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"]'
+              tags:
+                - tag: component
+                  value: job
+                - tag: job
+                  value: '{#JOBNAME}'
+              trigger_prototypes:
+                - uuid: cfade21b22a74e30b3e2b957086f9ba4
+                  expression: 'last(/INT MON-DB MSSQL/int.mssql.job.runstatus["{#JOBNAME}"])=0'
+                  name: 'INT: SQL Agent job {#JOBNAME} failed'
+                  priority: AVERAGE
+                  description: 'Last run failed (maintenance plan, index job, ERP job). See SQL Server Agent → Job History.'
+                  tags:
+                    - tag: scope
+                      value: availability
+          master_item:
+            key: 'mssql.job.status.get["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"]'
+          lld_macro_paths:
+            - lld_macro: '{#JOBNAME}'
+              path: $.job_name
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  return JSON.stringify(JSON.parse(value).filter(function (j) {
+                      return j.enabled === 1 || j.enabled === true || j.enabled === '1';
+                  }));
+      tags:
+        - tag: service
+          value: MON-DB
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.MSSQL.BACKUP.FULL.MAXAGE}'
+          value: 26h
+          description: 'Context per database, e.g. {$INT.MSSQL.BACKUP.FULL.MAXAGE:"Archive"}=8d.'
+        - macro: '{$INT.MSSQL.BACKUP.LOG.MAXAGE}'
+          value: 2h
+        - macro: '{$INT.MSSQL.BLOCKING.PERIOD}'
+          value: 2m
+        - macro: '{$INT.MSSQL.DBNAME.MATCHES}'
+          value: '.+'
+        - macro: '{$INT.MSSQL.DBNAME.NOT_MATCHES}'
+          value: '^(master|tempdb|model|msdb)$'
+        - macro: '{$INT.MSSQL.EXPRESS.LIMIT}'
+          value: 10G
+          description: 'Data size limit per database of the Express edition: 10G (SQL 2016-2022), 50G (SQL Server 2025 Express).'
+        - macro: '{$INT.MSSQL.EXPRESS.PUSED.CRIT}'
+          value: '95'
+        - macro: '{$INT.MSSQL.EXPRESS.PUSED.WARN}'
+          value: '80'
+        - macro: '{$INT.MSSQL.JOB.MATCHES}'
+          value: '.+'
+        - macro: '{$INT.MSSQL.JOB.NOT_MATCHES}'
+          value: '^(syspolicy_purge_history)$'
+        - macro: '{$INT.MSSQL.LOG.PUSED.MAX}'
+          value: '80'
+        - macro: '{$INT.TIER.CRITICAL}'
+          value: '0'
+          description: '1 on tier=critical SQL servers: instance down becomes DISASTER.'
+        - macro: '{$MSSQL.PASSWORD}'
+          type: SECRET_TEXT
+        - macro: '{$MSSQL.URI}'
+          value: 'sqlserver://localhost:1433'
+          description: 'Default instance: sqlserver://localhost:1433; named instance: sqlserver://localhost/SQLEXPRESS.'
+        - macro: '{$MSSQL.USER}'
+          value: zabbix
+      valuemaps:
+        - uuid: 5ed258bea800453d9beefc3992db4d52
+          name: 'INT MSSQL DB state'
+          mappings:
+            - value: '0'
+              newvalue: ONLINE
+            - value: '1'
+              newvalue: RESTORING
+            - value: '2'
+              newvalue: RECOVERING
+            - value: '3'
+              newvalue: RECOVERY_PENDING
+            - value: '4'
+              newvalue: SUSPECT
+            - value: '5'
+              newvalue: EMERGENCY
+            - value: '6'
+              newvalue: OFFLINE
+        - uuid: 0533531406b948b5b291ae75abd6b741
+          name: 'INT MSSQL job run status'
+          mappings:
+            - value: '0'
+              newvalue: Failed
+            - value: '1'
+              newvalue: Succeeded
+            - value: '2'
+              newvalue: Retry
+            - value: '3'
+              newvalue: Canceled
+            - value: '4'
+              newvalue: Running
+            - value: '5'
+              newvalue: Unknown
+        - uuid: bdd68d1ed20a4638b7ec07a7fddb1de3
+          name: 'INT MSSQL ping'
+          mappings:
+            - value: '0'
+              newvalue: Down
+            - value: '1'
+              newvalue: Up
+        - uuid: 3881afd3c4d54e6b8231133e5abfb77d
+          name: 'INT MSSQL recovery model'
+          mappings:
+            - value: '1'
+              newvalue: FULL
+            - value: '2'
+              newvalue: BULK_LOGGED
+            - value: '3'
+              newvalue: SIMPLE
+        - uuid: bf8dd20ddf7c43a793e755a181b9103f
+          name: 'INT MSSQL yes/no'
+          mappings:
+            - value: '0'
+              newvalue: 'No'
+            - value: '1'
+              newvalue: 'Yes'
+  triggers:
+    - uuid: 3be7c724f22f4b1d82a3f6ca43b22ca7
+      expression: 'max(/INT MON-DB MSSQL/mssql.ping["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"],#3)=0 and {$INT.TIER.CRITICAL}=1'
+      name: 'INT: Critical SQL Server instance is down'
+      priority: DISASTER
+      tags:
+        - tag: scope
+          value: availability
+    - uuid: dcff648c1d6b4f89bbc7460502860eff
+      expression: 'max(/INT MON-DB MSSQL/mssql.ping["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"],#3)=0'
+      name: 'INT: SQL Server instance is down'
+      priority: HIGH
+      description: 'The plugin cannot log in for 3 minutes: service stopped, instance hung, or the zabbix login is disabled / password changed.'
+      dependencies:
+        - name: 'INT: Critical SQL Server instance is down'
+          expression: 'max(/INT MON-DB MSSQL/mssql.ping["{$MSSQL.URI}","{$MSSQL.USER}","{$MSSQL.PASSWORD}"],#3)=0 and {$INT.TIER.CRITICAL}=1'
+      tags:
+        - tag: scope
+          value: availability

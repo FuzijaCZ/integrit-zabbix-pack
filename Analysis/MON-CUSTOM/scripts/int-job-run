@@ -1,0 +1,34 @@
+#!/bin/sh
+# Integrit MON-CUSTOM job wrapper (Linux). Runs a command and reports the result to Zabbix
+# (template "INT MON-CUSTOM Job") with zabbix_sender, using the local agent 2 config (server, host name, TLS PSK).
+#
+#   int-job-run <job-name> <command> [args...]
+#   INT_JOB_RECORDS=1234 int-job-run erp-export /opt/erp/export.sh     # optional record count
+#
+# The job name must be listed in the host macro {$INT.CUSTOM.JOBS}. The job's exit code is preserved.
+CONF=${INT_AGENT_CONF:-/etc/zabbix/zabbix_agent2.conf}
+
+if [ $# -lt 2 ]; then
+    echo "usage: int-job-run <job-name> <command> [args...]" >&2
+    exit 2
+fi
+job=$(printf '%s' "$1" | tr -d '"[]\\')
+shift
+
+start=$(date +%s)
+out=$("$@" 2>&1)
+rc=$?
+end=$(date +%s)
+
+msg=$(printf '%s' "$out" | tail -n 3 | tr '\n"' ' _' | cut -c1-500)
+tmp=$(mktemp)
+{
+    printf -- '- "int.custom.job.status[\\"%s\\"]" %d\n' "$job" "$rc"
+    printf -- '- "int.custom.job.duration[\\"%s\\"]" %d\n' "$job" "$((end - start))"
+    printf -- '- "int.custom.job.message[\\"%s\\"]" "%s"\n' "$job" "$msg"
+    [ -n "$INT_JOB_RECORDS" ] && printf -- '- "int.custom.job.records[\\"%s\\"]" %s\n' "$job" "$INT_JOB_RECORDS"
+} > "$tmp"
+# Duration and message first is not required: Zabbix stores values by key, the order inside one batch does not matter.
+zabbix_sender -c "$CONF" -i "$tmp" >/dev/null 2>&1 || echo "int-job-run: zabbix_sender failed for job $job" >&2
+rm -f "$tmp"
+exit $rc

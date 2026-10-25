@@ -1,0 +1,165 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 20f5bbc4f701485889c80e2fa50d4e68
+      name: Templates/Integrit/MON-NET
+  templates:
+    - uuid: 2089fa77e21f491093cbd006d5d40d72
+      template: 'INT MON-NET Meraki organization'
+      name: 'INT MON-NET Meraki organization'
+      description: |
+        Integrit MON-NET / MON-LAN wrapper for one customer Meraki organization (Dashboard API, external proxy).
+        Links the official 'Cisco Meraki organization by HTTP' (uplinks, VPN stats, licences, config changes).
+        Do NOT use the official 'Cisco Meraki dashboard by HTTP': it creates device hosts in the shared group
+        "Applications" without customer tags (breaks multi-tenancy). Instead this template adds per-device availability
+        items on the customer's organization host: MX appliance offline HIGH, other devices (MS, MR, ...) offline AVERAGE,
+        alerting WARNING.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'Cisco Meraki organization by HTTP'
+      groups:
+        - name: Templates/Integrit/MON-NET
+      items:
+        - uuid: c85ae992fa044e4e9e65cad35e9d49f2
+          name: 'INT: Device availabilities: Get data'
+          type: HTTP_AGENT
+          key: int.meraki.devices.availabilities
+          delay: 5m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 30s
+          url: 'https://{$MERAKI.API.URL}/organizations/{$ORGANIZATION_ID}/devices/availabilities'
+          query_fields:
+            - name: perPage
+              value: '1000'
+          headers:
+            - name: Authorization
+              value: 'Bearer {$MERAKI.TOKEN}'
+          description: 'GET /organizations/{organizationId}/devices/availabilities (up to 1000 devices).'
+          tags:
+            - tag: component
+              value: raw
+      discovery_rules:
+        - uuid: b17fc34ee3074a2089b6a552de6b15af
+          name: 'INT: Meraki devices discovery'
+          type: DEPENDENT
+          key: int.meraki.devices.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#NAME}'
+                value: '{$INT.MERAKI.DEVICE.NAME.MATCHES}'
+                formulaid: A
+              - macro: '{#NAME}'
+                value: '{$INT.MERAKI.DEVICE.NAME.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: B
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: 9810432d6632488486df36e051bd2f35
+              name: 'INT: Meraki [{#TYPE}] {#NAME}: Status'
+              type: DEPENDENT
+              key: 'int.meraki.device.status[{#SERIAL}]'
+              delay: '0'
+              valuemap:
+                name: 'INT Meraki device status'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.serial==''{#SERIAL}'')].status.first()'
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var m = {'online': 0, 'alerting': 1, 'offline': 2, 'dormant': 3};
+                      return m.hasOwnProperty(value) ? m[value] : 4;
+              master_item:
+                key: int.meraki.devices.availabilities
+              tags:
+                - tag: component
+                  value: device
+                - tag: device
+                  value: '{#NAME}'
+              trigger_prototypes:
+                - uuid: 19f33f29935d4168bd3de0a61a401b77
+                  expression: 'min(/INT MON-NET Meraki organization/int.meraki.device.status[{#SERIAL}],#2)=2 and {$INT.MERAKI.OFFLINE.HIGH:"{#TYPE}"}=1'
+                  name: 'INT: Meraki [{#TYPE}] {#NAME} is offline'
+                  priority: HIGH
+                  description: 'Device does not report to the Meraki cloud for 2 checks (10 min). Appliance (MX) = site gateway.'
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: 0900056e1f8147d984a9d2a8a2c26565
+                  expression: 'min(/INT MON-NET Meraki organization/int.meraki.device.status[{#SERIAL}],#2)=2 and {$INT.MERAKI.OFFLINE.HIGH:"{#TYPE}"}=0'
+                  name: 'INT: Meraki [{#TYPE}] {#NAME} is offline'
+                  priority: AVERAGE
+                  description: 'Device does not report to the Meraki cloud for 2 checks (10 min).'
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: 38f7541724b74de99a5b01cd3c53e821
+                  expression: 'min(/INT MON-NET Meraki organization/int.meraki.device.status[{#SERIAL}],#3)=1'
+                  name: 'INT: Meraki [{#TYPE}] {#NAME} is alerting'
+                  priority: WARNING
+                  description: 'Meraki dashboard shows an alert for this device (e.g. port errors, uplink issue). Details in the dashboard.'
+                  tags:
+                    - tag: scope
+                      value: availability
+          master_item:
+            key: int.meraki.devices.availabilities
+          lld_macro_paths:
+            - lld_macro: '{#NAME}'
+              path: $.name
+            - lld_macro: '{#SERIAL}'
+              path: $.serial
+            - lld_macro: '{#TYPE}'
+              path: $.productType
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var d = JSON.parse(value);
+                  d.forEach(function (x) {
+                      if (!x.name) {
+                          x.name = x.serial;
+                      }
+                  });
+                  return JSON.stringify(d);
+      tags:
+        - tag: service
+          value: MON-NET
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.MERAKI.DEVICE.NAME.MATCHES}'
+          value: '.+'
+        - macro: '{$INT.MERAKI.DEVICE.NAME.NOT_MATCHES}'
+          value: '^$'
+          description: 'Devices not to monitor (spares, lab).'
+        - macro: '{$INT.MERAKI.OFFLINE.HIGH}'
+          value: '0'
+          description: '1 = offline is HIGH for this product type (context). Default only appliance.'
+        - macro: '{$INT.MERAKI.OFFLINE.HIGH:"appliance"}'
+          value: '1'
+        - macro: '{$MERAKI.LICENSE.EXPIRE}'
+          value: '2592000'
+          description: 'Override of official 1 day: licence WARNING 30 days (in seconds) before expiry.'
+        - macro: '{$ORGANIZATION_ID}'
+          description: 'Meraki organization ID of this customer (Dashboard → Organization → Settings, or API /organizations).'
+      valuemaps:
+        - uuid: 1bea0df1818648a5b396c779093b3f04
+          name: 'INT Meraki device status'
+          mappings:
+            - value: '0'
+              newvalue: online
+            - value: '1'
+              newvalue: alerting
+            - value: '2'
+              newvalue: offline
+            - value: '3'
+              newvalue: dormant
+            - value: '4'
+              newvalue: unknown

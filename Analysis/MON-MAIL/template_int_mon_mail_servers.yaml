@@ -1,0 +1,439 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 638f460ec9ce421499d5f9071e67febd
+      name: Templates/Integrit/MON-MAIL
+  templates:
+    - uuid: 57e90179ccaa480799605082b7930b30
+      template: 'INT MON-MAIL Exchange'
+      name: 'INT MON-MAIL Exchange'
+      description: |
+        Integrit MON-MAIL for on-prem Exchange Server 2016 / 2019 / SE, linked next to 'INT MON-SRV Windows' (agent 2, active).
+        Transport queue, back-pressure events, mailbox database copies (mounted / healthy) and the SMTP/IIS certificate.
+        The official 'Microsoft Exchange Server 2016 by Zabbix agent active' is NOT linked: it repeats the agent availability
+        item of the Windows template, so both cannot be on one host. Exchange services: MON-SRV critical service list.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-MAIL
+      items:
+        - uuid: 3b735fd4895d4a62a093d73cd673f3ce
+          name: 'Exchange: Back pressure events'
+          type: ZABBIX_ACTIVE
+          key: 'eventlog[Application,,,MSExchangeTransport,"^(15004|15006|15007)$",,skip]'
+          delay: 1m
+          history: 30d
+          value_type: LOG
+          trends: '0'
+          description: 'Transport resource pressure: 15004 increased, 15006 disk space, 15007 memory. Transport rejects or delays mail.'
+          tags:
+            - tag: component
+              value: transport
+          triggers:
+            - uuid: 0bc32bfe514643e3a7c59fc94a0f59a0
+              expression: 'count(/INT MON-MAIL Exchange/eventlog[Application,,,MSExchangeTransport,"^(15004|15006|15007)$",,skip],{$INT.EXCH.BP.WINDOW})>0'
+              name: 'INT: Exchange transport is under back pressure'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Transport stops or slows accepting mail (usually disk space on the queue drive or memory). Resolves {$INT.EXCH.BP.WINDOW} after the last event.'
+              tags:
+                - tag: scope
+                  value: capacity
+        - uuid: b5eee4ceb49b454182e32a6b1ecc6a6f
+          name: 'Exchange: Certificate days left'
+          type: DEPENDENT
+          key: int.exch.cert.days
+          delay: '0'
+          units: d
+          description: 'Earliest expiry of certificates bound to SMTP or IIS. -9999 = none bound.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.days
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.exch.cert
+          tags:
+            - tag: component
+              value: certificate
+          triggers:
+            - uuid: 157f90ca73584013a4aa39d5665d52df
+              expression: 'last(/INT MON-MAIL Exchange/int.exch.cert.days)<0'
+              name: 'INT: Exchange certificate expired or not bound'
+              priority: HIGH
+              description: 'Outlook, OWA, ActiveSync and STARTTLS fail or warn. Subject in item "Exchange: Certificate subject".'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: 9b634376536a4643bffc1eda5fd4dbc3
+              expression: 'last(/INT MON-MAIL Exchange/int.exch.cert.days)<{$INT.EXCH.CERT.DAYS.WARN}'
+              name: 'INT: Exchange certificate expires in {ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              dependencies:
+                - name: 'INT: Exchange certificate expired or not bound'
+                  expression: 'last(/INT MON-MAIL Exchange/int.exch.cert.days)<0'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 1f3eedde23bd4513bd11415a0046f097
+          name: 'Exchange: Certificate raw'
+          type: ZABBIX_ACTIVE
+          key: int.exch.cert
+          delay: 6h
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 60s
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 0690b1999be5496fb30bfbc65a97abdd
+          name: 'Exchange: Certificate subject'
+          type: DEPENDENT
+          key: int.exch.cert.subject
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.subject
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          master_item:
+            key: int.exch.cert
+          tags:
+            - tag: component
+              value: certificate
+        - uuid: 89bef53d6574499f84d5b937e8dc4d94
+          name: 'Exchange: Database copies raw'
+          type: ZABBIX_ACTIVE
+          key: int.exch.db
+          delay: 5m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 60s
+          description: 'JSON from int_mon_mail_exchange.ps1 -Mode db (Get-MailboxDatabaseCopyStatus).'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: dfd3e1ced23d4bada8b0b3b35d92f5c9
+          name: 'Exchange: Database copies on this server'
+          type: DEPENDENT
+          key: int.exch.db.count
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.length()
+          master_item:
+            key: int.exch.db
+          tags:
+            - tag: component
+              value: database
+          triggers:
+            - uuid: ec6e8942a5c7438dab29f8f7b9c275d9
+              expression: 'nodata(/INT MON-MAIL Exchange/int.exch.db.count,{$INT.EXCH.NODATA})=1'
+              name: 'INT: Exchange database status not received'
+              priority: AVERAGE
+              description: 'int_mon_mail_exchange.ps1 fails (Exchange snap-in, timeout) or the agent file is missing. Run the UserParameter test from INSTALL step 5.'
+              tags:
+                - tag: scope
+                  value: monitoring
+        - uuid: 2b57afad002941eba1bb71a6fdc1e651
+          name: 'Exchange: Transport queue length'
+          type: ZABBIX_ACTIVE
+          key: 'perf_counter_en["\MSExchangeTransport Queues(_total)\Aggregate Delivery Queue Length (All Queues)"]'
+          delay: 1m
+          description: 'Messages waiting in all delivery queues of this transport server.'
+          tags:
+            - tag: component
+              value: transport
+          triggers:
+            - uuid: dd6bf510db8043b6ac8ba9e7b661b7ef
+              expression: 'min(/INT MON-MAIL Exchange/perf_counter_en["\MSExchangeTransport Queues(_total)\Aggregate Delivery Queue Length (All Queues)"],{$INT.EXCH.QUEUE.TIME})>{$INT.EXCH.QUEUE.HIGH}'
+              name: 'INT: Exchange transport queue over {$INT.EXCH.QUEUE.HIGH} for {$INT.EXCH.QUEUE.TIME}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'Mail is not leaving the server (smart host / internet down, DNS, receiving side, back pressure). Get-Queue shows which.'
+              tags:
+                - tag: scope
+                  value: performance
+            - uuid: 24537dde31ae47649ccac079610277bf
+              expression: 'min(/INT MON-MAIL Exchange/perf_counter_en["\MSExchangeTransport Queues(_total)\Aggregate Delivery Queue Length (All Queues)"],{$INT.EXCH.QUEUE.TIME})>{$INT.EXCH.QUEUE.WARN}'
+              name: 'INT: Exchange transport queue over {$INT.EXCH.QUEUE.WARN} for {$INT.EXCH.QUEUE.TIME}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              dependencies:
+                - name: 'INT: Exchange transport queue over {$INT.EXCH.QUEUE.HIGH} for {$INT.EXCH.QUEUE.TIME}'
+                  expression: 'min(/INT MON-MAIL Exchange/perf_counter_en["\MSExchangeTransport Queues(_total)\Aggregate Delivery Queue Length (All Queues)"],{$INT.EXCH.QUEUE.TIME})>{$INT.EXCH.QUEUE.HIGH}'
+              tags:
+                - tag: scope
+                  value: performance
+      discovery_rules:
+        - uuid: f4d3e418626a45148edb10d929f9f3cf
+          name: 'Exchange: Database copies discovery'
+          type: DEPENDENT
+          key: int.exch.db.discovery
+          delay: '0'
+          filter:
+            conditions:
+              - macro: '{#DB}'
+                value: '{$INT.EXCH.DB.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: A
+          lifetime: 7d
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: 2bc098c98029457680a257dee771b7e2
+              name: 'Exchange DB {#DB}: Active copy on this server'
+              type: DEPENDENT
+              key: 'int.exch.db.active[{#DB}]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.db==''{#DB}'')].active.first()'
+                  error_handler: DISCARD_VALUE
+              valuemap:
+                name: 'INT EXCH yes/no'
+              master_item:
+                key: int.exch.db
+              tags:
+                - tag: component
+                  value: database
+                - tag: database
+                  value: '{#DB}'
+            - uuid: e8480b8245994331957f4164aa4b64bc
+              name: 'Exchange DB {#DB}: Copy OK'
+              type: DEPENDENT
+              key: 'int.exch.db.ok[{#DB}]'
+              delay: '0'
+              description: '1 = active copy Mounted or passive copy Healthy.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.db==''{#DB}'')].ok.first()'
+                  error_handler: DISCARD_VALUE
+              valuemap:
+                name: 'INT EXCH yes/no'
+              master_item:
+                key: int.exch.db
+              tags:
+                - tag: component
+                  value: database
+                - tag: database
+                  value: '{#DB}'
+            - uuid: d7ae0a57555042eeab0b2d5f8fac4f3e
+              name: 'Exchange DB {#DB}: Copy status'
+              type: DEPENDENT
+              key: 'int.exch.db.status[{#DB}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.db==''{#DB}'')].status.first()'
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1d
+              master_item:
+                key: int.exch.db
+              tags:
+                - tag: component
+                  value: database
+                - tag: database
+                  value: '{#DB}'
+          trigger_prototypes:
+            - uuid: faf68c879f294a76a07db4177cb73502
+              expression: 'last(/INT MON-MAIL Exchange/int.exch.db.ok[{#DB}])=0 and last(/INT MON-MAIL Exchange/int.exch.db.active[{#DB}])=1'
+              name: 'INT: Exchange database {#DB} is not mounted'
+              priority: DISASTER
+              description: 'Mailboxes in this database are offline for users. Status text in item "Exchange DB {#DB}: Copy status". Check the database drive, log drive space and the event log.'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: bfe7631e150b4456bad663c9a721b562
+              expression: 'last(/INT MON-MAIL Exchange/int.exch.db.ok[{#DB}])=0 and last(/INT MON-MAIL Exchange/int.exch.db.active[{#DB}])=0'
+              name: 'INT: Exchange database copy {#DB} is not healthy'
+              priority: HIGH
+              description: 'Passive DAG copy is Failed / Suspended / Resynchronizing (item "Exchange DB {#DB}: Copy status"): no failover protection.'
+              tags:
+                - tag: scope
+                  value: availability
+          master_item:
+            key: int.exch.db
+          lld_macro_paths:
+            - lld_macro: '{#DB}'
+              path: $.db
+      tags:
+        - tag: service
+          value: MON-MAIL
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.EXCH.BP.WINDOW}'
+          value: 1h
+        - macro: '{$INT.EXCH.CERT.DAYS.WARN}'
+          value: '14'
+        - macro: '{$INT.EXCH.DB.NOT_MATCHES}'
+          value: CHANGE_IF_NEEDED
+          description: 'Regex of databases to ignore (e.g. recovery or test databases).'
+        - macro: '{$INT.EXCH.NODATA}'
+          value: 30m
+        - macro: '{$INT.EXCH.QUEUE.HIGH}'
+          value: '500'
+        - macro: '{$INT.EXCH.QUEUE.TIME}'
+          value: 15m
+        - macro: '{$INT.EXCH.QUEUE.WARN}'
+          value: '100'
+      valuemaps:
+        - uuid: 966cab895abd47b7a0c818ac653b714a
+          name: 'INT EXCH yes/no'
+          mappings:
+            - value: '0'
+              newvalue: 'no'
+            - value: '1'
+              newvalue: 'yes'
+    - uuid: a1a8c42496c644fe8bdd6e78d484eae3
+      template: 'INT MON-MAIL Postfix'
+      name: 'INT MON-MAIL Postfix'
+      description: |
+        Integrit MON-MAIL for Postfix servers, linked next to 'INT MON-SRV Linux' (agent active).
+        Queue sizes from postqueue -j (UserParameter int.postfix.queue) and the Postfix master process.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-MAIL
+      items:
+        - uuid: 94975e9857a44717bc0c1bc9443cb0a4
+          name: 'Postfix: Master process'
+          type: ZABBIX_ACTIVE
+          key: 'proc.num[master,root]'
+          delay: 1m
+          description: 'Number of Postfix master processes (0 = Postfix is not running).'
+          tags:
+            - tag: component
+              value: service
+          triggers:
+            - uuid: 0b544bb8d150439b8022a510958a4575
+              expression: 'max(/INT MON-MAIL Postfix/proc.num[master,root],#3)=0'
+              name: 'INT: Postfix is not running'
+              priority: HIGH
+              description: 'No Postfix master process for 3 checks. Mail is not accepted or sent.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: bd9a956d9e3e454bac51003cc9cbe3af
+          name: 'Postfix: Active queue'
+          type: DEPENDENT
+          key: int.postfix.queue.active
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.active
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.postfix.queue
+          tags:
+            - tag: component
+              value: queue
+        - uuid: 51bd9ba6a31a47c59722a8a824b65482
+          name: 'Postfix: Deferred queue'
+          type: DEPENDENT
+          key: int.postfix.queue.deferred
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.deferred
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.postfix.queue
+          tags:
+            - tag: component
+              value: queue
+          triggers:
+            - uuid: 929bbc3c2aca4479a24b932cb8758311
+              expression: 'min(/INT MON-MAIL Postfix/int.postfix.queue.deferred,{$INT.POSTFIX.DEFERRED.TIME})>{$INT.POSTFIX.DEFERRED.MAX}'
+              name: 'INT: Postfix deferred queue over {$INT.POSTFIX.DEFERRED.MAX} for {$INT.POSTFIX.DEFERRED.TIME}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Mail cannot be delivered (relay down, DNS, receiver rejects / blacklisted). Check: postqueue -p, mail log.'
+              tags:
+                - tag: scope
+                  value: performance
+        - uuid: 5ea3b6261baf463f8bb97dcb6f58d78b
+          name: 'Postfix: Hold queue'
+          type: DEPENDENT
+          key: int.postfix.queue.hold
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.hold
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.postfix.queue
+          tags:
+            - tag: component
+              value: queue
+        - uuid: 37d628e3bb83430c8ec01f597d6c4ad4
+          name: 'Postfix: Queue raw'
+          type: ZABBIX_ACTIVE
+          key: int.postfix.queue
+          delay: 5m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 30s
+          tags:
+            - tag: component
+              value: raw
+        - uuid: a1057f1b9f9645e6af08eafbd6bf021e
+          name: 'Postfix: Queue total'
+          type: DEPENDENT
+          key: int.postfix.queue.total
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.total
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.postfix.queue
+          tags:
+            - tag: component
+              value: queue
+          triggers:
+            - uuid: cf650042860d442892103f7cce209d04
+              expression: 'nodata(/INT MON-MAIL Postfix/int.postfix.queue.total,{$INT.POSTFIX.NODATA})=1'
+              name: 'INT: Postfix queue status not received'
+              priority: AVERAGE
+              description: 'int-postfix-queue.sh fails (postqueue -j needs Postfix 3.1+) or the UserParameter file is missing.'
+              dependencies:
+                - name: 'INT: Postfix is not running'
+                  expression: 'max(/INT MON-MAIL Postfix/proc.num[master,root],#3)=0'
+              tags:
+                - tag: scope
+                  value: monitoring
+      tags:
+        - tag: service
+          value: MON-MAIL
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.POSTFIX.DEFERRED.MAX}'
+          value: '50'
+        - macro: '{$INT.POSTFIX.DEFERRED.TIME}'
+          value: 30m
+        - macro: '{$INT.POSTFIX.NODATA}'
+          value: 30m
