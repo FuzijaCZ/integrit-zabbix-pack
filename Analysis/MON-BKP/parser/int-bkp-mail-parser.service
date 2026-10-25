@@ -1,0 +1,16 @@
+[Unit]
+Description=Integrit MON-BKP backup e-mail parser (Graph -> Zabbix)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=int-bkp-parser
+Group=int-bkp-parser
+ExecStart=/usr/bin/python3 /usr/local/lib/integrit/bkp-mail-parser/int-bkp-mail-parser.py --config /etc/integrit/bkp-mail-parser.json
+StateDirectory=integrit/bkp-mail-parser
+TimeoutStartSec=4min
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes

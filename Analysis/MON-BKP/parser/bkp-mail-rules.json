@@ -1,0 +1,27 @@
+{
+  "_comment": "Rules are tried in order on the mail subject. First match wins. 'result' group text is mapped by result_map (case-insensitive regex -> Success/Warning/Failed). Test every new rule with: int-bkp-mail-parser.py --test-subject '<subject>'",
+  "result_map": [
+    ["partial|warning|warnings|with errors", "Warning"],
+    ["fail|failed|error|aborted|cancel|cancelled|canceled|interrupted|not completed|unsuccessful", "Failed"],
+    ["success|successful|successfully|succeeded|completed|complete|finished|done", "Success"]
+  ],
+  "rules": [
+    {
+      "name": "Veeam (B&R, Agent, M365) job report",
+      "subject": "^\\[(?P<result>Success|Warning|Failed)\\]\\s+(?P<job>.+?)(?:\\s+\\(\\d+[^)]*\\).*)?$"
+    },
+    {
+      "name": "Synology Hyper Backup / Active Backup for Business (English)",
+      "subject": "(?i)(?:backup|restore|copy) task\\s+\\[?(?P<job>.+?)\\]?\\s+(?:on\\s+\\S+\\s+)?(?:has\\s+|was\\s+|is\\s+)?(?P<result>partially completed|completed with warnings|completed with errors|successfully completed|completed|succeeded|finished|failed|was cancelled|cancelled|canceled|aborted)\\b"
+    },
+    {
+      "name": "Synology Hyper Backup / Active Backup for Business (Czech)",
+      "subject": "(?i)úloha\\s+(?:zálohování\\s+)?\\[?(?P<job>.+?)\\]?\\s+(?:na\\s+\\S+\\s+)?(?:byla\\s+)?(?P<result>částečně dokončena|úspěšně dokončena|dokončena|selhala|zrušena)\\b",
+      "result_map": [
+        ["částečně", "Warning"],
+        ["selhala|zrušena", "Failed"],
+        ["dokončena", "Success"]
+      ]
+    }
+  ]
+}

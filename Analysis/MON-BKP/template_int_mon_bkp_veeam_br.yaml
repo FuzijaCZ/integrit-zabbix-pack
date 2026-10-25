@@ -1,0 +1,407 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: ac5f8c0017cc498ebef070ea511d8f95
+      name: Templates/Integrit/MON-BKP
+  templates:
+    - uuid: f25ed98038df4fbe8f0c7d862df0278b
+      template: 'INT MON-BKP Veeam Backup and Replication'
+      name: 'INT MON-BKP Veeam Backup and Replication'
+      description: |
+        Integrit MON-BKP connector for Veeam Backup & Replication 12+ (REST API, TCP 9419), collected by the site proxy.
+        Links the official 'Veeam Backup and Replication by HTTP'. Its per-job and per-session discoveries are switched off
+        by macro and replaced by the Integrit job data model: last result, last successful run, duration, message.
+        Triggers: failed job HIGH, warning WARNING (AVERAGE if warnings persist {$INT.BKP.WARN.PERIOD}),
+        no successful run in {$INT.BKP.MAX.AGE} HIGH / {$INT.BKP.MAX.AGE.DISASTER} DISASTER, duration anomaly WARNING,
+        repository free space AVERAGE / HIGH. Set {$VEEAM.API.URL}, {$VEEAM.USER}, {$VEEAM.PASSWORD} on the host. See INSTALL.md.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'Veeam Backup and Replication by HTTP'
+      groups:
+        - name: Templates/Integrit/MON-BKP
+      discovery_rules:
+        - uuid: 95add9885ffe4c3da4a379518c9befa1
+          name: 'INT: Veeam jobs discovery'
+          type: DEPENDENT
+          key: int.bkp.veeam.jobs.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#NAME}'
+                value: '{$INT.BKP.JOB.NAME.MATCHES}'
+                formulaid: A
+              - macro: '{#NAME}'
+                value: '{$INT.BKP.JOB.NAME.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: B
+              - macro: '{#JOB.STATUS}'
+                value: '{$INT.BKP.JOB.STATUS.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: C
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'One set of items per Veeam job. Disabled jobs and jobs matching {$INT.BKP.JOB.NAME.NOT_MATCHES} are not discovered.'
+          item_prototypes:
+            - uuid: a3bfbf6140c6445a964549bb7c60a246
+              name: 'INT: Job [{#NAME}]: Get data'
+              type: DEPENDENT
+              key: 'int.bkp.veeam.job.raw[{#ID}]'
+              delay: '0'
+              history: '0'
+              value_type: TEXT
+              trends: '0'
+              description: 'Job state merged with its newest finished session (sessions of the last {$CREATED.AFTER} days).'
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var d = JSON.parse(value);
+                      var jobs = (d.jobs_states && d.jobs_states.data) ? d.jobs_states.data : [];
+                      var job = jobs.filter(function (j) { return j.id === '{#ID}'; })[0];
+                      if (!job) {
+                          throw 'Job {#ID} not found in API response.';
+                      }
+                      var ts = function (s) {
+                          return Math.floor(Date.parse(String(s).replace(/\.\d+/, '')) / 1000);
+                      };
+                      var codes = {'Success': 0, 'Warning': 1, 'Failed': 2};
+                      var out = {
+                          result: codes.hasOwnProperty(job.lastResult) ? codes[job.lastResult] : 3,
+                          last_success: null,
+                          duration: null,
+                          message: ''
+                      };
+                      var sessions = (d.sessions && d.sessions.data) ? d.sessions.data : [];
+                      sessions = sessions.filter(function (s) {
+                          return (s.jobId === job.id || s.name === job.name) && s.state === 'Stopped' && s.endTime;
+                      });
+                      sessions.sort(function (a, b) { return ts(b.endTime) - ts(a.endTime); });
+                      if (sessions.length > 0) {
+                          out.duration = ts(sessions[0].endTime) - ts(sessions[0].creationTime);
+                          out.message = (sessions[0].result && sessions[0].result.message) ? sessions[0].result.message : '';
+                      }
+                      for (var i = 0; i < sessions.length; i++) {
+                          if (sessions[i].result && sessions[i].result.result === 'Success') {
+                              out.last_success = ts(sessions[i].endTime);
+                              break;
+                          }
+                      }
+                      if (out.last_success === null && job.lastResult === 'Success' && job.lastRun) {
+                          out.last_success = ts(job.lastRun);
+                      }
+                      return JSON.stringify(out);
+              master_item:
+                key: veeam.get.metrics
+              tags:
+                - tag: component
+                  value: raw
+            - uuid: 9e814b33c4f5435b9d4af7490103fb94
+              name: 'INT: Job [{#NAME}]: Duration of last run'
+              type: DEPENDENT
+              key: 'int.bkp.veeam.job.duration[{#ID}]'
+              delay: '0'
+              units: s
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var v = JSON.parse(value).duration;
+                      if (v === null) {
+                          throw 'No finished session.';
+                      }
+                      return v;
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 7d
+              master_item:
+                key: 'int.bkp.veeam.job.raw[{#ID}]'
+              tags:
+                - tag: component
+                  value: jobs
+                - tag: job
+                  value: '{#NAME}'
+              trigger_prototypes:
+                - uuid: 6074617cc3dc45b484dbe5bf37e38055
+                  expression: |
+                    last(/INT MON-BKP Veeam Backup and Replication/int.bkp.veeam.job.duration[{#ID}])>{$INT.BKP.DURATION.FACTOR}*percentile(/INT MON-BKP Veeam Backup and Replication/int.bkp.veeam.job.duration[{#ID}],30d,50)
+                    and count(/INT MON-BKP Veeam Backup and Replication/int.bkp.veeam.job.duration[{#ID}],30d)>{$INT.BKP.DURATION.MIN.SAMPLES}
+                  name: 'INT: Job [{#NAME}] ran more than {$INT.BKP.DURATION.FACTOR}x longer than usual'
+                  opdata: 'Duration: {ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  description: 'Last run took more than {$INT.BKP.DURATION.FACTOR} times the 30-day median. Often the first sign of a slow repository or growing data.'
+                  tags:
+                    - tag: scope
+                      value: performance
+            - uuid: e4b65c9ffe2a473ab6773b8b830587ef
+              name: 'INT: Job [{#NAME}]: Last successful run'
+              type: DEPENDENT
+              key: 'int.bkp.veeam.job.lastsuccess[{#ID}]'
+              delay: '0'
+              units: unixtime
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var v = JSON.parse(value).last_success;
+                      if (v === null) {
+                          throw 'No successful run known.';
+                      }
+                      return v;
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: 'int.bkp.veeam.job.raw[{#ID}]'
+              tags:
+                - tag: component
+                  value: jobs
+                - tag: job
+                  value: '{#NAME}'
+              trigger_prototypes:
+                - uuid: c53a8746274b427f99bfc38217bc6b64
+                  expression: |
+                    now()-last(/INT MON-BKP Veeam Backup and Replication/int.bkp.veeam.job.lastsuccess[{#ID}])>{$INT.BKP.MAX.AGE.DISASTER:"{#NAME}"}
+                    or nodata(/INT MON-BKP Veeam Backup and Replication/int.bkp.veeam.job.lastsuccess[{#ID}],{$INT.BKP.MAX.AGE.DISASTER:"{#NAME}"})=1
+                  name: 'INT: Job [{#NAME}]: no successful backup for more than {$INT.BKP.MAX.AGE.DISASTER:"{#NAME}"}'
+                  opdata: 'Last success: {ITEM.LASTVALUE1}'
+                  priority: DISASTER
+                  description: 'Two backup windows missed. Data is at risk.'
+                  dependencies:
+                    - name: 'Veeam Backup: There are errors in requests to API'
+                      expression: 'length(last(/INT MON-BKP Veeam Backup and Replication/veeam.get.errors))>0'
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: c84081d67d754b989de2b4006bff82e9
+                  expression: |
+                    now()-last(/INT MON-BKP Veeam Backup and Replication/int.bkp.veeam.job.lastsuccess[{#ID}])>{$INT.BKP.MAX.AGE:"{#NAME}"}
+                    or nodata(/INT MON-BKP Veeam Backup and Replication/int.bkp.veeam.job.lastsuccess[{#ID}],{$INT.BKP.MAX.AGE:"{#NAME}"})=1
+                  name: 'INT: Job [{#NAME}]: no successful backup for more than {$INT.BKP.MAX.AGE:"{#NAME}"}'
+                  opdata: 'Last success: {ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'Missed run (job not started, still failing, or schedule changed). Weekly jobs need {$INT.BKP.MAX.AGE:"<job>"} and {$INT.BKP.MAX.AGE.DISASTER:"<job>"} on the host.'
+                  dependencies:
+                    - name: 'INT: Job [{#NAME}]: no successful backup for more than {$INT.BKP.MAX.AGE.DISASTER:"{#NAME}"}'
+                      expression: |
+                        now()-last(/INT MON-BKP Veeam Backup and Replication/int.bkp.veeam.job.lastsuccess[{#ID}])>{$INT.BKP.MAX.AGE.DISASTER:"{#NAME}"}
+                        or nodata(/INT MON-BKP Veeam Backup and Replication/int.bkp.veeam.job.lastsuccess[{#ID}],{$INT.BKP.MAX.AGE.DISASTER:"{#NAME}"})=1
+                    - name: 'Veeam Backup: There are errors in requests to API'
+                      expression: 'length(last(/INT MON-BKP Veeam Backup and Replication/veeam.get.errors))>0'
+                  tags:
+                    - tag: scope
+                      value: availability
+            - uuid: 0fa335310d054bc48df85d345f87ef5d
+              name: 'INT: Job [{#NAME}]: Last message'
+              type: DEPENDENT
+              key: 'int.bkp.veeam.job.message[{#ID}]'
+              delay: '0'
+              value_type: TEXT
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.message
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1d
+              master_item:
+                key: 'int.bkp.veeam.job.raw[{#ID}]'
+              tags:
+                - tag: component
+                  value: jobs
+                - tag: job
+                  value: '{#NAME}'
+            - uuid: f65dc3e9438e496b9fafca11a9003c94
+              name: 'INT: Job [{#NAME}]: Last result'
+              type: DEPENDENT
+              key: 'int.bkp.veeam.job.result[{#ID}]'
+              delay: '0'
+              valuemap:
+                name: 'INT backup result'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.result
+              master_item:
+                key: 'int.bkp.veeam.job.raw[{#ID}]'
+              tags:
+                - tag: component
+                  value: jobs
+                - tag: job
+                  value: '{#NAME}'
+              trigger_prototypes:
+                - uuid: 3b9a766bee674fa59fccb20fb4fbfc66
+                  expression: 'last(/INT MON-BKP Veeam Backup and Replication/int.bkp.veeam.job.result[{#ID}])=2'
+                  name: 'INT: Job [{#NAME}] failed'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'Last run of the job failed. See item "Last message" or the Veeam console.'
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: c12df915a81d47b4a99ebba58432c964
+                  expression: |
+                    min(/INT MON-BKP Veeam Backup and Replication/int.bkp.veeam.job.result[{#ID}],{$INT.BKP.WARN.PERIOD:"{#NAME}"})=1
+                    and max(/INT MON-BKP Veeam Backup and Replication/int.bkp.veeam.job.result[{#ID}],{$INT.BKP.WARN.PERIOD:"{#NAME}"})=1
+                  name: 'INT: Job [{#NAME}] ends with warning for {$INT.BKP.WARN.PERIOD:"{#NAME}"}'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: AVERAGE
+                  description: 'Every run in {$INT.BKP.WARN.PERIOD:"{#NAME}"} ended with warning (draft: 3 consecutive warnings).'
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: cf4d6aa9f7a94ef49dd973292735222d
+                  expression: 'last(/INT MON-BKP Veeam Backup and Replication/int.bkp.veeam.job.result[{#ID}])=1'
+                  name: 'INT: Job [{#NAME}] ended with warning'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  dependencies:
+                    - name: 'INT: Job [{#NAME}] ends with warning for {$INT.BKP.WARN.PERIOD:"{#NAME}"}'
+                      expression: |
+                        min(/INT MON-BKP Veeam Backup and Replication/int.bkp.veeam.job.result[{#ID}],{$INT.BKP.WARN.PERIOD:"{#NAME}"})=1
+                        and max(/INT MON-BKP Veeam Backup and Replication/int.bkp.veeam.job.result[{#ID}],{$INT.BKP.WARN.PERIOD:"{#NAME}"})=1
+                  tags:
+                    - tag: scope
+                      value: availability
+          master_item:
+            key: veeam.get.metrics
+          lld_macro_paths:
+            - lld_macro: '{#ID}'
+              path: $.id
+            - lld_macro: '{#JOB.STATUS}'
+              path: $.status
+            - lld_macro: '{#NAME}'
+              path: $.name
+            - lld_macro: '{#TYPE}'
+              path: $.type
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.jobs_states.data
+        - uuid: 5b6cdab5dfc74296a49e01b9a45face9
+          name: 'INT: Veeam repositories free space discovery'
+          type: DEPENDENT
+          key: int.bkp.veeam.repositories.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#NAME}'
+                value: '{$REPOSITORIES.NAME.MATCHES}'
+                formulaid: A
+              - macro: '{#NAME}'
+                value: '{$REPOSITORIES.NAME.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: B
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: f4f93bfe302f4e0f9052dc69f2e54b69
+              name: 'INT: Repository [{#NAME}]: Free space, in %'
+              type: DEPENDENT
+              key: 'int.bkp.veeam.repository.pfree[{#ID}]'
+              delay: '0'
+              value_type: FLOAT
+              units: '%'
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var d = JSON.parse(value);
+                      var r = ((d.repositories_states && d.repositories_states.data) ? d.repositories_states.data : [])
+                          .filter(function (x) { return x.id === '{#ID}'; })[0];
+                      if (!r || !(r.capacityGB > 0)) {
+                          throw 'Repository {#ID} has no capacity data.';
+                      }
+                      return r.freeGB / r.capacityGB * 100;
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: veeam.get.metrics
+              tags:
+                - tag: component
+                  value: repositories
+                - tag: repository
+                  value: '{#NAME}'
+              trigger_prototypes:
+                - uuid: ad059dfba0f94135a107f9b810b246ad
+                  expression: 'max(/INT MON-BKP Veeam Backup and Replication/int.bkp.veeam.repository.pfree[{#ID}],15m)<{$INT.BKP.REPO.PFREE.MIN.CRIT:"{#NAME}"}'
+                  name: 'INT: Repository [{#NAME}]: free space below {$INT.BKP.REPO.PFREE.MIN.CRIT:"{#NAME}"}%'
+                  opdata: 'Free: {{ITEM.LASTVALUE1}.fmtnum(1)}%'
+                  priority: HIGH
+                  description: 'Next backups will fail or retention will be cut.'
+                  tags:
+                    - tag: scope
+                      value: capacity
+                - uuid: 0613191a1e80424584b8cb6c8a3c76f0
+                  expression: 'max(/INT MON-BKP Veeam Backup and Replication/int.bkp.veeam.repository.pfree[{#ID}],15m)<{$INT.BKP.REPO.PFREE.MIN.WARN:"{#NAME}"}'
+                  name: 'INT: Repository [{#NAME}]: free space below {$INT.BKP.REPO.PFREE.MIN.WARN:"{#NAME}"}%'
+                  opdata: 'Free: {{ITEM.LASTVALUE1}.fmtnum(1)}%'
+                  priority: AVERAGE
+                  dependencies:
+                    - name: 'INT: Repository [{#NAME}]: free space below {$INT.BKP.REPO.PFREE.MIN.CRIT:"{#NAME}"}%'
+                      expression: 'max(/INT MON-BKP Veeam Backup and Replication/int.bkp.veeam.repository.pfree[{#ID}],15m)<{$INT.BKP.REPO.PFREE.MIN.CRIT:"{#NAME}"}'
+                  tags:
+                    - tag: scope
+                      value: capacity
+          master_item:
+            key: veeam.get.metrics
+          lld_macro_paths:
+            - lld_macro: '{#ID}'
+              path: $.id
+            - lld_macro: '{#NAME}'
+              path: $.name
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.repositories_states.data
+      tags:
+        - tag: service
+          value: MON-BKP
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.BKP.DURATION.FACTOR}'
+          value: '3'
+          description: 'WARNING when the last run takes longer than this multiple of the 30-day median.'
+        - macro: '{$INT.BKP.DURATION.MIN.SAMPLES}'
+          value: '7'
+          description: 'Runs (one duration value per run) needed in 30 days before the anomaly trigger is evaluated.'
+        - macro: '{$INT.BKP.JOB.NAME.MATCHES}'
+          value: '.+'
+        - macro: '{$INT.BKP.JOB.NAME.NOT_MATCHES}'
+          value: '^$'
+          description: 'Regex of job names not to monitor (test jobs, intentionally paused jobs).'
+        - macro: '{$INT.BKP.JOB.STATUS.NOT_MATCHES}'
+          value: '(?i)^disabled$'
+          description: 'Disabled jobs are not monitored.'
+        - macro: '{$INT.BKP.MAX.AGE}'
+          value: 26h
+          description: 'Max time since last successful run (HIGH). Context per job name, e.g. {$INT.BKP.MAX.AGE:"Weekly offsite"}=8d.'
+        - macro: '{$INT.BKP.MAX.AGE.DISASTER}'
+          value: 52h
+          description: 'Max time since last successful run (DISASTER), normally 2x {$INT.BKP.MAX.AGE}.'
+        - macro: '{$INT.BKP.REPO.PFREE.MIN.CRIT}'
+          value: '5'
+        - macro: '{$INT.BKP.REPO.PFREE.MIN.WARN}'
+          value: '15'
+        - macro: '{$INT.BKP.WARN.PERIOD}'
+          value: 3d
+          description: 'AVERAGE when every run within this period ended with warning.'
+        - macro: '{$JOB.NAME.NOT_MATCHES}'
+          value: '.*'
+          description: 'Switches off the official per-job discovery (replaced by INT jobs discovery).'
+        - macro: '{$SESSION.NAME.NOT_MATCHES}'
+          value: '.*'
+          description: 'Switches off the official per-session discovery (one item set per session = noise).'
+      valuemaps:
+        - uuid: 060f7251d80146e090e9c362f1ed670c
+          name: 'INT backup result'
+          mappings:
+            - value: '0'
+              newvalue: Success
+            - value: '1'
+              newvalue: Warning
+            - value: '2'
+              newvalue: Failed
+            - value: '3'
+              newvalue: 'Not run yet'

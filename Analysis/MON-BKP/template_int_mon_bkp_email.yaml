@@ -1,0 +1,255 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: ac5f8c0017cc498ebef070ea511d8f95
+      name: Templates/Integrit/MON-BKP
+  templates:
+    - uuid: b53a891972624e1280008777594c885b
+      template: 'INT MON-BKP E-mail reports'
+      name: 'INT MON-BKP E-mail reports'
+      description: |
+        Integrit MON-BKP connector for backup products that only send e-mail reports (Synology Hyper Backup /
+        Active Backup for Business, Veeam without REST API, others). Reports go to backup-reports+<HOST>@integrit.cz,
+        the Integrit e-mail parser (int-bkp-mail-parser.py) reads them via Microsoft Graph and sends trapper values here.
+        One set of items per job, discovered from the reports. Link on the host that represents the backup system
+        (e.g. ACME-PRG-NAS01). The host needs no interface.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-BKP
+      discovery_rules:
+        - uuid: bb4b46ae297a4b238d06f5b56a05c6bb
+          name: 'INT: E-mail backup jobs discovery'
+          type: TRAP
+          key: int.bkp.mail.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#JOB}'
+                value: '{$INT.BKP.JOB.NAME.MATCHES}'
+                formulaid: A
+              - macro: '{#JOB}'
+                value: '{$INT.BKP.JOB.NAME.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: B
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Sent by the parser with every report batch: all jobs ever seen for this host.'
+          item_prototypes:
+            - uuid: 1cbee713348548189b73019a2a593596
+              name: 'INT: Job [{#JOB}]: Last successful run'
+              type: TRAP
+              key: 'int.bkp.mail.lastsuccess["{#JOB}"]'
+              delay: '0'
+              units: unixtime
+              description: 'Time of the last report with result Success.'
+              tags:
+                - tag: component
+                  value: jobs
+                - tag: job
+                  value: '{#JOB}'
+              trigger_prototypes:
+                - uuid: 910729c2c1ab4d8ab15c24c2dd17e646
+                  expression: 'nodata(/INT MON-BKP E-mail reports/int.bkp.mail.lastsuccess["{#JOB}"],{$INT.BKP.MAX.AGE.DISASTER:"{#JOB}"})=1'
+                  name: 'INT: Job [{#JOB}]: no successful backup report for more than {$INT.BKP.MAX.AGE.DISASTER:"{#JOB}"}'
+                  priority: DISASTER
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: 729566ab6db348049cafb2c1121109a0
+                  expression: 'nodata(/INT MON-BKP E-mail reports/int.bkp.mail.lastsuccess["{#JOB}"],{$INT.BKP.MAX.AGE:"{#JOB}"})=1'
+                  name: 'INT: Job [{#JOB}]: no successful backup report for more than {$INT.BKP.MAX.AGE:"{#JOB}"}'
+                  priority: HIGH
+                  description: 'No Success report arrived: job failed, did not run, or the report was not sent (check the device notification settings and the parser).'
+                  dependencies:
+                    - name: 'INT: Job [{#JOB}]: no successful backup report for more than {$INT.BKP.MAX.AGE.DISASTER:"{#JOB}"}'
+                      expression: 'nodata(/INT MON-BKP E-mail reports/int.bkp.mail.lastsuccess["{#JOB}"],{$INT.BKP.MAX.AGE.DISASTER:"{#JOB}"})=1'
+                  tags:
+                    - tag: scope
+                      value: availability
+            - uuid: 92fe2831acdb4ecf8fc25a87b87d73ae
+              name: 'INT: Job [{#JOB}]: Last report subject'
+              type: TRAP
+              key: 'int.bkp.mail.message["{#JOB}"]'
+              delay: '0'
+              history: 90d
+              value_type: TEXT
+              trends: '0'
+              tags:
+                - tag: component
+                  value: jobs
+                - tag: job
+                  value: '{#JOB}'
+            - uuid: d2d1e520b3314db58ea3558496774cb2
+              name: 'INT: Job [{#JOB}]: Last result'
+              type: TRAP
+              key: 'int.bkp.mail.result["{#JOB}"]'
+              delay: '0'
+              history: 90d
+              valuemap:
+                name: 'INT backup result'
+              tags:
+                - tag: component
+                  value: jobs
+                - tag: job
+                  value: '{#JOB}'
+              trigger_prototypes:
+                - uuid: b66a40c7e3184add8e3d08875912ed65
+                  expression: 'last(/INT MON-BKP E-mail reports/int.bkp.mail.result["{#JOB}"])=2'
+                  name: 'INT: Job [{#JOB}] failed'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'Last report says failed. See item "Last report subject" or the original mail in backup-reports@integrit.cz.'
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: 459a3878b68b4d45910129d05073896c
+                  expression: |
+                    last(/INT MON-BKP E-mail reports/int.bkp.mail.result["{#JOB}"])=1
+                    and count(/INT MON-BKP E-mail reports/int.bkp.mail.result["{#JOB}"],{$INT.BKP.WARN.PERIOD:"{#JOB}"},"eq",1)>={$INT.BKP.WARN.COUNT}
+                    and count(/INT MON-BKP E-mail reports/int.bkp.mail.result["{#JOB}"],{$INT.BKP.WARN.PERIOD:"{#JOB}"},"ne",1)=0
+                  name: 'INT: Job [{#JOB}] has only warnings in {$INT.BKP.WARN.PERIOD:"{#JOB}"}'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: AVERAGE
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: 5968180e28f749e9b254b299a1b99439
+                  expression: 'last(/INT MON-BKP E-mail reports/int.bkp.mail.result["{#JOB}"])=1'
+                  name: 'INT: Job [{#JOB}] ended with warning'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  dependencies:
+                    - name: 'INT: Job [{#JOB}] has only warnings in {$INT.BKP.WARN.PERIOD:"{#JOB}"}'
+                      expression: |
+                        last(/INT MON-BKP E-mail reports/int.bkp.mail.result["{#JOB}"])=1
+                        and count(/INT MON-BKP E-mail reports/int.bkp.mail.result["{#JOB}"],{$INT.BKP.WARN.PERIOD:"{#JOB}"},"eq",1)>={$INT.BKP.WARN.COUNT}
+                        and count(/INT MON-BKP E-mail reports/int.bkp.mail.result["{#JOB}"],{$INT.BKP.WARN.PERIOD:"{#JOB}"},"ne",1)=0
+                  tags:
+                    - tag: scope
+                      value: availability
+      tags:
+        - tag: service
+          value: MON-BKP
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.BKP.JOB.NAME.MATCHES}'
+          value: '.+'
+        - macro: '{$INT.BKP.JOB.NAME.NOT_MATCHES}'
+          value: '^$'
+          description: 'Regex of job names not to monitor.'
+        - macro: '{$INT.BKP.MAX.AGE}'
+          value: 26h
+          description: 'Max time since last Success report (HIGH). Context per job, e.g. {$INT.BKP.MAX.AGE:"USB weekly"}=8d.'
+        - macro: '{$INT.BKP.MAX.AGE.DISASTER}'
+          value: 52h
+        - macro: '{$INT.BKP.WARN.COUNT}'
+          value: '3'
+          description: 'AVERAGE when at least this many reports in {$INT.BKP.WARN.PERIOD} are warnings and none is Success/Failed.'
+        - macro: '{$INT.BKP.WARN.PERIOD}'
+          value: 3d
+      valuemaps:
+        - uuid: cb3a55622d944d278413c85d6136f693
+          name: 'INT backup result'
+          mappings:
+            - value: '0'
+              newvalue: Success
+            - value: '1'
+              newvalue: Warning
+            - value: '2'
+              newvalue: Failed
+            - value: '3'
+              newvalue: 'Not run yet'
+    - uuid: 42ba7793bb6d4972bfac616c65182246
+      template: 'INT MON-BKP E-mail parser'
+      name: 'INT MON-BKP E-mail parser'
+      description: |
+        Health of the Integrit backup e-mail parser itself. Link on the platform host that runs the parser
+        (e.g. INT-PLATFORM-BKP-PARSER in group Integrit/Platform). Alerts go to Integrit, not to customers.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-BKP
+      items:
+        - uuid: 3b010ea307fd4309997517298fa8cd85
+          name: 'INT: Parser: Errors in last run'
+          type: TRAP
+          key: int.bkp.mail.parser.error
+          delay: '0'
+          history: 31d
+          value_type: TEXT
+          trends: '0'
+          description: 'Empty = OK. Otherwise Graph/zabbix_sender/config error text.'
+          tags:
+            - tag: component
+              value: parser
+          triggers:
+            - uuid: 3f575716847e4e04b1f72c48fd447f4b
+              expression: 'length(last(/INT MON-BKP E-mail parser/int.bkp.mail.parser.error))>0'
+              name: 'INT: Backup e-mail parser reports an error'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 736917fcc3794b0cba8d817812450e2c
+          name: 'INT: Parser: Last run'
+          type: TRAP
+          key: int.bkp.mail.parser.heartbeat
+          delay: '0'
+          history: 7d
+          units: unixtime
+          tags:
+            - tag: component
+              value: parser
+          triggers:
+            - uuid: c70349950d674414af0983edf9dbe966
+              expression: 'nodata(/INT MON-BKP E-mail parser/int.bkp.mail.parser.heartbeat,{$INT.BKP.PARSER.NODATA})=1'
+              name: 'INT: Backup e-mail parser has not run for {$INT.BKP.PARSER.NODATA}'
+              priority: AVERAGE
+              description: 'No backup reports are processed for any customer. Check: systemctl status int-bkp-mail-parser.timer on the external proxy.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 9835290204634f378be8c73f4d0a5f59
+          name: 'INT: Parser: Last unmatched report'
+          type: TRAP
+          key: int.bkp.mail.parser.unmatched.last
+          delay: '0'
+          history: 31d
+          value_type: TEXT
+          trends: '0'
+          description: 'Recipient and subject of the last report no rule could parse.'
+          tags:
+            - tag: component
+              value: parser
+        - uuid: b7089b0dc70446c6bf8d9fd231f3bc4e
+          name: 'INT: Parser: Unmatched reports in last run'
+          type: TRAP
+          key: int.bkp.mail.parser.unmatched
+          delay: '0'
+          history: 31d
+          tags:
+            - tag: component
+              value: parser
+          triggers:
+            - uuid: 8d738f8c4f4544d485965bc9072602d9
+              expression: 'last(/INT MON-BKP E-mail parser/int.bkp.mail.parser.unmatched)>0'
+              name: 'INT: Backup e-mail parser could not parse a report'
+              priority: WARNING
+              description: 'A mail arrived without host in the recipient (backup-reports+HOST@) or in an unknown format. Add a rule to bkp-mail-rules.json. Resolves with the next clean run.'
+              tags:
+                - tag: scope
+                  value: availability
+      tags:
+        - tag: service
+          value: MON-BKP
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.BKP.PARSER.NODATA}'
+          value: 30m
+          description: 'Parser runs every 5 minutes.'
