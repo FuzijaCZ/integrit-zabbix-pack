@@ -1,0 +1,57 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 5cb950fb7da04006a78d4920023b5504
+      name: Templates/Integrit/MON-DB
+  templates:
+    - uuid: b5dcad749abd4112ad5f09197ae77fec
+      template: 'INT MON-DB MySQL'
+      name: 'INT MON-DB MySQL'
+      description: |
+        Integrit MON-DB wrapper for MySQL / MariaDB (web hosting, WordPress, line-of-business apps). Links the official
+        'MySQL by Zabbix agent 2 active' (service down HIGH, refused/aborted connections, slow queries, replication).
+        Link on the MON-SRV host of the database server. Backups of MySQL (mysqldump, Veeam) are checked by MON-BKP / MON-CUSTOM.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'MySQL by Zabbix agent 2 active'
+      groups:
+        - name: Templates/Integrit/MON-DB
+      tags:
+        - tag: service
+          value: MON-DB
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$MYSQL.DSN}'
+          value: 'tcp://localhost:3306'
+        - macro: '{$MYSQL.PASSWORD}'
+          type: SECRET_TEXT
+        - macro: '{$MYSQL.USER}'
+          value: zbx_monitor
+    - uuid: 1e2c00a810074ccb8b707c347483a0a8
+      template: 'INT MON-DB PostgreSQL'
+      name: 'INT MON-DB PostgreSQL'
+      description: |
+        Integrit MON-DB wrapper for PostgreSQL (on request). Links the official 'PostgreSQL by Zabbix agent 2 active'
+        (service down, replication lag, xid age, deadlocks, bloat). Link on the MON-SRV host of the database server.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'PostgreSQL by Zabbix agent 2 active'
+      groups:
+        - name: Templates/Integrit/MON-DB
+      tags:
+        - tag: service
+          value: MON-DB
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$PG.CONNSTRING.AGENT2}'
+          value: 'tcp://localhost:5432'
+        - macro: '{$PG.PASSWORD}'
+          type: SECRET_TEXT
+        - macro: '{$PG.USER}'
+          value: zbx_monitor
