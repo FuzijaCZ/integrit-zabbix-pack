@@ -1,0 +1,152 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 925be0d784cf4d488183b2674abbe3cc
+      name: Templates/Integrit/MON-VOIP
+  templates:
+    - uuid: b06dcb2159384c7ab6cf0ef9cd4a7b2d
+      template: 'INT MON-VOIP SIP endpoint'
+      name: 'INT MON-VOIP SIP endpoint'
+      description: |
+        Integrit MON-VOIP vendor-neutral SIP check: SIP OPTIONS to a PBX, SBC or provider trunk endpoint (UDP, TCP or TLS) with
+        ExternalScript int-sip-options.py on the proxy. Zabbix has no native SIP check.
+        On-prem PBX: host monitored by the site proxy, {$INT.SIP.PBX}=1 (not answering = HIGH, DISASTER for tier=critical).
+        Hosted PBX / provider SBC / trunk endpoint: host monitored by the external proxy, {$INT.SIP.PBX}=0 (AVERAGE).
+        Any SIP answer below {$INT.SIP.FAIL.CODE.MIN} (also 401/403/404/405) proves the SIP stack is alive.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-VOIP
+      items:
+        - uuid: 8eef7f494035432ab7947cfb08578c4e
+          name: 'SIP: Error'
+          type: DEPENDENT
+          key: int.sip.error
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.error
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: 'int-sip-options.py["{HOST.CONN}","{$INT.SIP.PORT}","{$INT.SIP.TRANSPORT}","{$INT.SIP.TIMEOUT}"]'
+          tags:
+            - tag: component
+              value: sip
+        - uuid: 7aa04b6a5c2f473182950739a33b241b
+          name: 'SIP: OPTIONS probe'
+          type: EXTERNAL
+          key: 'int-sip-options.py["{HOST.CONN}","{$INT.SIP.PORT}","{$INT.SIP.TRANSPORT}","{$INT.SIP.TIMEOUT}"]'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 15s
+          description: 'JSON from the proxy ExternalScript int-sip-options.py.'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 91bc62df00ca4ecb9a1b7fd516cf7578
+          name: 'SIP: Response code'
+          type: DEPENDENT
+          key: int.sip.code
+          delay: '0'
+          description: '0 = no SIP answer (timeout, refused, DNS).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.code
+          master_item:
+            key: 'int-sip-options.py["{HOST.CONN}","{$INT.SIP.PORT}","{$INT.SIP.TRANSPORT}","{$INT.SIP.TIMEOUT}"]'
+          tags:
+            - tag: component
+              value: sip
+        - uuid: 54a6c1fe31ba48c0acb316825c925c0c
+          name: 'SIP: Response time'
+          type: DEPENDENT
+          key: int.sip.rtt
+          delay: '0'
+          value_type: FLOAT
+          units: ms
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.rtt_ms
+            - type: IN_RANGE
+              parameters:
+                - '0.001'
+                - ''
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int-sip-options.py["{HOST.CONN}","{$INT.SIP.PORT}","{$INT.SIP.TRANSPORT}","{$INT.SIP.TIMEOUT}"]'
+          tags:
+            - tag: component
+              value: sip
+          triggers:
+            - uuid: 540764e8ce804c379d3322a87a758e18
+              expression: 'min(/INT MON-VOIP SIP endpoint/int.sip.rtt,#3)>{$INT.SIP.RTT.MAX}'
+              name: 'INT: SIP response time above {$INT.SIP.RTT.MAX} ms'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Slow signalling usually means an overloaded PBX or a congested / lossy line; call quality suffers.'
+              tags:
+                - tag: scope
+                  value: performance
+      tags:
+        - tag: service
+          value: MON-VOIP
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.SIP.FAIL.CODE.MIN}'
+          value: '500'
+          description: 'SIP codes from this value (5xx/6xx, e.g. 503 Service Unavailable) count as failure, like no answer.'
+        - macro: '{$INT.SIP.PBX}'
+          value: '1'
+          description: '1 = on-prem PBX (HIGH), 0 = hosted PBX / trunk / SBC endpoint (AVERAGE).'
+        - macro: '{$INT.SIP.PORT}'
+          value: '5060'
+        - macro: '{$INT.SIP.RTT.MAX}'
+          value: '300'
+        - macro: '{$INT.SIP.TIMEOUT}'
+          value: '4'
+          description: 'Seconds the probe waits for an answer.'
+        - macro: '{$INT.SIP.TRANSPORT}'
+          value: udp
+          description: 'udp, tcp or tls (TLS usually port 5061).'
+        - macro: '{$INT.TIER.CRITICAL}'
+          value: '0'
+          description: '1 on PBX hosts with tag tier=critical: not answering becomes DISASTER.'
+  triggers:
+    - uuid: 7f09fd4a0bb648caa89947c190a0c85f
+      expression: '(last(/INT MON-VOIP SIP endpoint/int.sip.code,#1)=0 or last(/INT MON-VOIP SIP endpoint/int.sip.code,#1)>={$INT.SIP.FAIL.CODE.MIN}) and (last(/INT MON-VOIP SIP endpoint/int.sip.code,#2)=0 or last(/INT MON-VOIP SIP endpoint/int.sip.code,#2)>={$INT.SIP.FAIL.CODE.MIN}) and {$INT.SIP.PBX}=1 and {$INT.TIER.CRITICAL}=1'
+      name: 'INT: Critical PBX {HOST.NAME} does not answer SIP'
+      priority: DISASTER
+      tags:
+        - tag: scope
+          value: availability
+    - uuid: 056cee02fb854c8884e45739e90c6926
+      expression: '(last(/INT MON-VOIP SIP endpoint/int.sip.code,#1)=0 or last(/INT MON-VOIP SIP endpoint/int.sip.code,#1)>={$INT.SIP.FAIL.CODE.MIN}) and (last(/INT MON-VOIP SIP endpoint/int.sip.code,#2)=0 or last(/INT MON-VOIP SIP endpoint/int.sip.code,#2)>={$INT.SIP.FAIL.CODE.MIN}) and {$INT.SIP.PBX}=1'
+      name: 'INT: PBX {HOST.NAME} does not answer SIP'
+      opdata: 'Code: {ITEM.LASTVALUE1}'
+      priority: HIGH
+      description: 'Two SIP OPTIONS probes in a row got no answer or a 5xx/6xx. Calls are probably failing. See item "SIP: Error".'
+      dependencies:
+        - name: 'INT: Critical PBX {HOST.NAME} does not answer SIP'
+          expression: '(last(/INT MON-VOIP SIP endpoint/int.sip.code,#1)=0 or last(/INT MON-VOIP SIP endpoint/int.sip.code,#1)>={$INT.SIP.FAIL.CODE.MIN}) and (last(/INT MON-VOIP SIP endpoint/int.sip.code,#2)=0 or last(/INT MON-VOIP SIP endpoint/int.sip.code,#2)>={$INT.SIP.FAIL.CODE.MIN}) and {$INT.SIP.PBX}=1 and {$INT.TIER.CRITICAL}=1'
+      tags:
+        - tag: scope
+          value: availability
+    - uuid: 1fd844ef56784f5a80c729b89c9dc1a2
+      expression: '(last(/INT MON-VOIP SIP endpoint/int.sip.code,#1)=0 or last(/INT MON-VOIP SIP endpoint/int.sip.code,#1)>={$INT.SIP.FAIL.CODE.MIN}) and (last(/INT MON-VOIP SIP endpoint/int.sip.code,#2)=0 or last(/INT MON-VOIP SIP endpoint/int.sip.code,#2)>={$INT.SIP.FAIL.CODE.MIN}) and {$INT.SIP.PBX}=0'
+      name: 'INT: SIP endpoint {HOST.NAME} does not answer from outside'
+      opdata: 'Code: {ITEM.LASTVALUE1}'
+      priority: AVERAGE
+      description: 'Hosted PBX, provider SBC or trunk endpoint does not answer SIP OPTIONS from the Integrit external proxy.'
+      tags:
+        - tag: scope
+          value: availability
