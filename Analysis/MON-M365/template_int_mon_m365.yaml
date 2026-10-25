@@ -1,0 +1,620 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: ef16e5a6f9ba432e9e4d241dc1c040ef
+      name: Templates/Integrit/MON-M365
+  templates:
+    - uuid: 9952a579735d4d69ae4a255db65e6fc5
+      template: 'INT MON-M365 Tenant'
+      name: 'INT MON-M365 Tenant'
+      description: |
+        Integrit MON-M365 wrapper for one customer Microsoft 365 tenant (external proxy, multi-tenant Entra app of Integrit).
+        Links the official 'Microsoft 365 reports by HTTP' (service health, usage reports) and adds licences, subscriptions,
+        directory sync, app credential expiry, global admins and tenant hygiene values via Microsoft Graph (one Script item, 6 h).
+        Uses the official credential macros {$MS365.TENANT.ID}, {$MS365.APP.ID}, {$MS365.PASSWORD}.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'Microsoft 365 reports by HTTP'
+      groups:
+        - name: Templates/Integrit/MON-M365
+      items:
+        - uuid: 0963429b86d8468bb9b12c0059e66bb1
+          name: 'Tenant: Global administrators'
+          type: DEPENDENT
+          key: int.m365.global_admins
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.global_admins
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.m365.tenant.get
+          tags:
+            - tag: component
+              value: tenant
+          triggers:
+            - uuid: deeba12e323342ed82267e97c6760129
+              expression: 'last(/INT MON-M365 Tenant/int.m365.global_admins)>{$INT.M365.GA.MAX} or last(/INT MON-M365 Tenant/int.m365.global_admins)<{$INT.M365.GA.MIN}'
+              name: 'INT: M365 has {ITEM.LASTVALUE1} global administrators (expected {$INT.M365.GA.MIN}-{$INT.M365.GA.MAX})'
+              priority: WARNING
+              description: 'Too many global admins widen the attack surface; fewer than 2 risks lock-out (keep a break-glass account).'
+              tags:
+                - tag: scope
+                  value: security
+        - uuid: 81282ccb22f74e5ea7eb22ad71cc0a12
+          name: 'Tenant: Graph errors'
+          type: DEPENDENT
+          key: int.m365.errors
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Token, consent or permission errors of required checks. Empty = OK.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.errors
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.m365.tenant.get
+          tags:
+            - tag: component
+              value: tenant
+          triggers:
+            - uuid: dca8459074b745b18769a6f473baf2ff
+              expression: 'length(last(/INT MON-M365 Tenant/int.m365.errors))>0'
+              name: 'INT: M365 Graph API errors (token / consent / permissions)'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Check the app secret, admin consent in the customer tenant and API permissions. Text in item "Tenant: Graph errors".'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 26dbc5ddd0e1473795b1cca3df6daede
+          name: 'Tenant: Licensed users disabled'
+          type: DEPENDENT
+          key: int.m365.licensed.disabled
+          delay: '0'
+          description: 'Disabled accounts that still hold a licence (savings).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.licensed_disabled
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.m365.tenant.get
+          tags:
+            - tag: component
+              value: tenant
+        - uuid: f165fa4ceaab41bdb3fc3108a85997de
+          name: 'Tenant: Licensed users inactive'
+          type: DEPENDENT
+          key: int.m365.licensed.inactive
+          delay: '0'
+          description: 'Enabled licensed users without sign-in for {$INT.M365.INACTIVE.DAYS} days (needs Entra ID P1).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.licensed_inactive
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.m365.tenant.get
+          tags:
+            - tag: component
+              value: tenant
+        - uuid: 3d0dc33d709b4b1ab21008f062209f9a
+          name: 'Tenant: Optional check errors'
+          type: DEPENDENT
+          key: int.m365.errors.optional
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Checks that need Entra ID P1 or extra permissions (MFA report, sign-in activity, Secure Score). Not alerted.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.optional_errors
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.m365.tenant.get
+          tags:
+            - tag: component
+              value: tenant
+        - uuid: f0799798264a4ccf98a5fa2a9be0b05c
+          name: 'Tenant: Users without MFA'
+          type: DEPENDENT
+          key: int.m365.mfa.unregistered
+          delay: '0'
+          description: 'Member users not registered for MFA (needs Entra ID P1). Report value.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.mfa_unregistered
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.m365.tenant.get
+          tags:
+            - tag: component
+              value: tenant
+        - uuid: 2b473009d1244549933a9c0a0f57c5c1
+          name: 'Tenant: Next app credential expiry'
+          type: DEPENDENT
+          key: int.m365.appcred.days
+          delay: '0'
+          units: d
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.app_cred_days
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.m365.tenant.get
+          tags:
+            - tag: component
+              value: tenant
+          triggers:
+            - uuid: f9a5eb5d24e04cd794f2b890502ec6ab
+              expression: 'last(/INT MON-M365 Tenant/int.m365.appcred.days)<{$INT.M365.APPCRED.EXPIRY.WARN}'
+              name: 'INT: M365 app secret / certificate expires in {ITEM.LASTVALUE1} days'
+              opdata: '{?last(//int.m365.appcred.days)} d'
+              priority: WARNING
+              description: 'Integrations using this app registration stop working at expiry (backup, scanners, Zabbix itself).'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 846538b51e8344859be1ae21b382f631
+          name: 'Tenant: Next app credential name'
+          type: DEPENDENT
+          key: int.m365.appcred.name
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.app_cred_name
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.m365.tenant.get
+          tags:
+            - tag: component
+              value: tenant
+        - uuid: 50315307ba8a46c28d1f62230423eea2
+          name: 'Tenant: Secure Score'
+          type: DEPENDENT
+          key: int.m365.securescore
+          delay: '0'
+          value_type: FLOAT
+          units: '%'
+          description: 'Microsoft Secure Score in % of maximum. Report value.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.secure_score_pct
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.m365.tenant.get
+          tags:
+            - tag: component
+              value: tenant
+        - uuid: 3921085d908042ad8bf0074dd15277b8
+          name: 'Tenant: Directory sync age'
+          type: DEPENDENT
+          key: int.m365.sync.age
+          delay: '0'
+          units: s
+          description: 'Time since last Entra Connect / Cloud Sync run (0 = cloud-only tenant).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.sync_age
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.m365.tenant.get
+          tags:
+            - tag: component
+              value: tenant
+          triggers:
+            - uuid: d5f61531afc74e4c8bebe49199a4511e
+              expression: 'last(/INT MON-M365 Tenant/int.m365.sync.age)>{$INT.M365.SYNC.MAX.AGE}'
+              name: 'INT: M365 directory sync older than {$INT.M365.SYNC.MAX.AGE}'
+              opdata: 'Last sync: {ITEM.LASTVALUE1} ago'
+              priority: HIGH
+              description: 'On-premises AD changes (new users, password changes, leavers) no longer reach Microsoft 365. Check the Entra Connect server.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 69f5615a6e52475b92fa3518c9bb3f96
+          name: 'Tenant: Get data'
+          type: SCRIPT
+          key: int.m365.tenant.get
+          delay: 6h
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          params: |
+            var params = JSON.parse(value);
+            var GRAPH = 'https://graph.microsoft.com/v1.0';
+            var result = {errors: [], optional_errors: []};
+            var token;
+
+            function request(method, url, body, headers) {
+                var req = new HttpRequest();
+                if (params.http_proxy) {
+                    req.setProxy(params.http_proxy);
+                }
+                (headers || []).forEach(function (h) { req.addHeader(h); });
+                var resp = method === 'POST' ? req.post(url, body) : req.get(url);
+                var status = req.getStatus();
+                if (status < 200 || status >= 300) {
+                    throw 'HTTP ' + status + ' ' + url.replace(/\?.*$/, '') + ': ' + String(resp).substring(0, 200);
+                }
+                return JSON.parse(resp);
+            }
+
+            function graphAll(path) {
+                var url = GRAPH + path, out = [];
+                while (url) {
+                    var page = request('GET', url, null, ['Authorization: Bearer ' + token, 'ConsistencyLevel: eventual']);
+                    out = out.concat(page.value || []);
+                    url = page['@odata.nextLink'];
+                }
+                return out;
+            }
+
+            function part(name, fn, optional) {
+                try {
+                    fn();
+                }
+                catch (e) {
+                    (optional ? result.optional_errors : result.errors).push(name + ': ' + e);
+                }
+            }
+
+            ['tenant_id', 'app_id', 'password'].forEach(function (f) {
+                if (!params[f] || params[f].indexOf('{$') === 0) {
+                    throw 'Macro for ' + f + ' is not set.';
+                }
+            });
+
+            token = request('POST', 'https://login.microsoftonline.com/' + encodeURIComponent(params.tenant_id) + '/oauth2/v2.0/token',
+                'grant_type=client_credentials&scope=' + encodeURIComponent('https://graph.microsoft.com/.default') +
+                '&client_id=' + encodeURIComponent(params.app_id) + '&client_secret=' + encodeURIComponent(params.password),
+                ['Content-Type: application/x-www-form-urlencoded']).access_token;
+
+            var now = Date.now();
+            var day = 86400000;
+
+            part('subscribedSkus', function () {
+                result.skus = graphAll('/subscribedSkus').filter(function (s) {
+                    return s.appliesTo === 'User';
+                }).map(function (s) {
+                    var enabled = (s.prepaidUnits && s.prepaidUnits.enabled) || 0;
+                    return {
+                        sku: s.skuPartNumber,
+                        enabled: enabled,
+                        warning: (s.prepaidUnits && s.prepaidUnits.warning) || 0,
+                        suspended: (s.prepaidUnits && s.prepaidUnits.suspended) || 0,
+                        consumed: s.consumedUnits || 0,
+                        free: enabled - (s.consumedUnits || 0),
+                        status: s.capabilityStatus
+                    };
+                });
+            });
+
+            part('directory/subscriptions', function () {
+                result.subscriptions = graphAll('/directory/subscriptions').map(function (s) {
+                    var next = s.nextLifecycleDateTime ? Date.parse(s.nextLifecycleDateTime) : null;
+                    return {
+                        id: s.id,
+                        sku: s.skuPartNumber,
+                        status: s.status,
+                        trial: s.isTrial ? 1 : 0,
+                        total: s.totalLicenses || 0,
+                        days_to_next: next ? Math.floor((next - now) / day) : null
+                    };
+                });
+            });
+
+            part('organization', function () {
+                var org = graphAll('/organization?$select=onPremisesSyncEnabled,onPremisesLastSyncDateTime')[0] || {};
+                result.sync_enabled = org.onPremisesSyncEnabled ? 1 : 0;
+                result.sync_age = (org.onPremisesSyncEnabled && org.onPremisesLastSyncDateTime)
+                    ? Math.floor((now - Date.parse(org.onPremisesLastSyncDateTime)) / 1000) : 0;
+            });
+
+            part('applications', function () {
+                var next = null, nextName = '';
+                graphAll('/applications?$select=displayName,passwordCredentials,keyCredentials').forEach(function (a) {
+                    (a.passwordCredentials || []).concat(a.keyCredentials || []).forEach(function (c) {
+                        var end = Date.parse(c.endDateTime);
+                        if (end > now && (next === null || end < next)) {
+                            next = end;
+                            nextName = a.displayName + (c.displayName ? ' / ' + c.displayName : '');
+                        }
+                    });
+                });
+                result.app_cred_days = next === null ? 9999 : Math.floor((next - now) / day);
+                result.app_cred_name = nextName;
+            });
+
+            part('global admins', function () {
+                result.global_admins = graphAll("/directoryRoles(roleTemplateId='62e90394-69f5-4237-9190-012177145e10')/members?$select=id").length;
+            });
+
+            part('MFA registration (needs Entra ID P1)', function () {
+                result.mfa_unregistered = graphAll("/reports/authenticationMethods/userRegistrationDetails?$select=id&$filter=isMfaRegistered eq false and userType eq 'member'").length;
+            }, true);
+
+            part('secure score', function () {
+                var s = graphAll('/security/secureScores?$top=1')[0];
+                result.secure_score_pct = (s && s.maxScore > 0) ? Math.round(s.currentScore / s.maxScore * 1000) / 10 : null;
+            }, true);
+
+            part('licensed users (sign-in activity needs Entra ID P1)', function () {
+                var limit = now - parseInt(params.inactive_days, 10) * day;
+                var disabled = 0, inactive = 0;
+                graphAll('/users?$select=accountEnabled,assignedLicenses,signInActivity&$top=999').forEach(function (u) {
+                    if (!u.assignedLicenses || u.assignedLicenses.length === 0) {
+                        return;
+                    }
+                    if (u.accountEnabled === false) {
+                        disabled++;
+                        return;
+                    }
+                    var last = u.signInActivity && u.signInActivity.lastSignInDateTime ? Date.parse(u.signInActivity.lastSignInDateTime) : 0;
+                    if (last < limit) {
+                        inactive++;
+                    }
+                });
+                result.licensed_disabled = disabled;
+                result.licensed_inactive = inactive;
+            }, true);
+
+            result.errors = result.errors.join('\n');
+            result.optional_errors = result.optional_errors.join('\n');
+            return JSON.stringify(result);
+          description: 'Microsoft Graph: subscribedSkus, directory/subscriptions, organization, applications, global admins, MFA registration, Secure Score, licensed users. Same app registration as the official template.'
+          timeout: 120s
+          parameters:
+            - name: app_id
+              value: '{$MS365.APP.ID}'
+            - name: http_proxy
+              value: '{$MS365.HTTP.PROXY}'
+            - name: inactive_days
+              value: '{$INT.M365.INACTIVE.DAYS}'
+            - name: password
+              value: '{$MS365.PASSWORD}'
+            - name: tenant_id
+              value: '{$MS365.TENANT.ID}'
+          tags:
+            - tag: component
+              value: raw
+      discovery_rules:
+        - uuid: 8f470f38ede541569c78b86500dfeef6
+          name: 'INT: Licence SKUs discovery'
+          type: DEPENDENT
+          key: int.m365.sku.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#SKU}'
+                value: '{$INT.M365.SKU.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: A
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: 5de49e2b0d1b4296a16d6c3a85adb697
+              name: 'Licence {#SKU}: Free'
+              type: DEPENDENT
+              key: 'int.m365.sku.free["{#SKU}"]'
+              delay: '0'
+              value_type: FLOAT
+              description: 'Enabled (purchased) minus consumed (assigned). Negative = more assigned than purchased.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.skus[?(@.sku=="{#SKU}")].free.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: int.m365.tenant.get
+              tags:
+                - tag: component
+                  value: license
+                - tag: sku
+                  value: '{#SKU}'
+              trigger_prototypes:
+                - uuid: ab5e3558525a4aff88e768b17bf9d786
+                  expression: 'last(/INT MON-M365 Tenant/int.m365.sku.free["{#SKU}"])<{$INT.M365.SKU.MIN.FREE:"{#SKU}"}'
+                  name: 'INT: M365 licence {#SKU}: only {ITEM.LASTVALUE1} free'
+                  priority: WARNING
+                  description: 'Fewer free licences than {$INT.M365.SKU.MIN.FREE:"{#SKU}"}. New users cannot be licensed. Order more or reclaim licences from disabled users.'
+                  tags:
+                    - tag: scope
+                      value: capacity
+            - uuid: 2e6bf8579f0f4e4ebb2a548cef671a27
+              name: 'Licence {#SKU}: Purchased'
+              type: DEPENDENT
+              key: 'int.m365.sku.enabled["{#SKU}"]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.skus[?(@.sku=="{#SKU}")].enabled.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: int.m365.tenant.get
+              tags:
+                - tag: component
+                  value: license
+                - tag: sku
+                  value: '{#SKU}'
+            - uuid: 553de95d570f4ccdafb39d592d5c2da0
+              name: 'Licence {#SKU}: Status'
+              type: DEPENDENT
+              key: 'int.m365.sku.status["{#SKU}"]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.skus[?(@.sku=="{#SKU}")].status.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: int.m365.tenant.get
+              tags:
+                - tag: component
+                  value: license
+                - tag: sku
+                  value: '{#SKU}'
+              trigger_prototypes:
+                - uuid: 6e34e80cbd13469f955ab47a4238e243
+                  expression: 'find(/INT MON-M365 Tenant/int.m365.sku.status["{#SKU}"],,"regexp","^(Warning|Suspended|LockedOut)$")=1'
+                  name: 'INT: M365 licence {#SKU} is {ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'Warning = subscription expired, in grace period; Suspended / LockedOut = users are losing access. Renew now.'
+                  tags:
+                    - tag: scope
+                      value: availability
+            - uuid: 1c1ed13bba7e476d820bf4877549f613
+              name: 'Licence {#SKU}: Assigned'
+              type: DEPENDENT
+              key: 'int.m365.sku.consumed["{#SKU}"]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.skus[?(@.sku=="{#SKU}")].consumed.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: int.m365.tenant.get
+              tags:
+                - tag: component
+                  value: license
+                - tag: sku
+                  value: '{#SKU}'
+          master_item:
+            key: int.m365.tenant.get
+          lld_macro_paths:
+            - lld_macro: '{#SKU}'
+              path: $.sku
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.skus
+        - uuid: 8dbd550858704c96a44ad3ffff81bb99
+          name: 'INT: Subscriptions discovery'
+          type: DEPENDENT
+          key: int.m365.subscription.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#SKU}'
+                value: '{$INT.M365.SKU.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: A
+              - macro: '{#STATUS}'
+                value: '^(Enabled|Warning|Suspended|LockedOut)$'
+                formulaid: B
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: b154d5ae269d466e9792065007f3d19b
+              name: 'Subscription {#SKU} ({#TOTAL}): Days to next lifecycle date'
+              type: DEPENDENT
+              key: 'int.m365.sub.days["{#SUB.ID}"]'
+              delay: '0'
+              units: d
+              description: 'Days until renewal / end of term (nextLifecycleDateTime).'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.subscriptions[?(@.id=="{#SUB.ID}")].days_to_next.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: int.m365.tenant.get
+              tags:
+                - tag: component
+                  value: license
+                - tag: sku
+                  value: '{#SKU}'
+              trigger_prototypes:
+                - uuid: 826148509cd74935b3f8f3494e4388d0
+                  expression: 'last(/INT MON-M365 Tenant/int.m365.sub.days["{#SUB.ID}"])<{$INT.M365.SUB.EXPIRY.CRIT} and {$INT.M365.SUB.EXPIRY.CHECK:"{#SKU}"}=1'
+                  name: 'INT: M365 subscription {#SKU} ends in {ITEM.LASTVALUE1} days'
+                  priority: HIGH
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: b389fdc4435141fdb0995f0446fab934
+                  expression: 'last(/INT MON-M365 Tenant/int.m365.sub.days["{#SUB.ID}"])<{$INT.M365.SUB.EXPIRY.WARN} and {$INT.M365.SUB.EXPIRY.CHECK:"{#SKU}"}=1'
+                  name: 'INT: M365 subscription {#SKU} ends in {ITEM.LASTVALUE1} days'
+                  priority: AVERAGE
+                  description: 'Only for SKUs with {$INT.M365.SUB.EXPIRY.CHECK:"<SKU>"}=1 (no auto-renewal). Auto-renewing subscriptions would alert before every renewal.'
+                  dependencies:
+                    - name: 'INT: M365 subscription {#SKU} ends in {ITEM.LASTVALUE1} days'
+                      expression: 'last(/INT MON-M365 Tenant/int.m365.sub.days["{#SUB.ID}"])<{$INT.M365.SUB.EXPIRY.CRIT} and {$INT.M365.SUB.EXPIRY.CHECK:"{#SKU}"}=1'
+                  tags:
+                    - tag: scope
+                      value: availability
+          master_item:
+            key: int.m365.tenant.get
+          lld_macro_paths:
+            - lld_macro: '{#SKU}'
+              path: $.sku
+            - lld_macro: '{#STATUS}'
+              path: $.status
+            - lld_macro: '{#SUB.ID}'
+              path: $.id
+            - lld_macro: '{#TOTAL}'
+              path: $.total
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.subscriptions
+      tags:
+        - tag: service
+          value: MON-M365
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.M365.APPCRED.EXPIRY.WARN}'
+          value: '30'
+          description: 'Days before an app registration secret / certificate expires.'
+        - macro: '{$INT.M365.GA.MAX}'
+          value: '5'
+        - macro: '{$INT.M365.GA.MIN}'
+          value: '2'
+        - macro: '{$INT.M365.INACTIVE.DAYS}'
+          value: '30'
+        - macro: '{$INT.M365.SKU.MIN.FREE}'
+          value: '0'
+          description: 'WARNING when free licences drop below this. Default 0 = only over-assignment. Set per SKU, e.g. {$INT.M365.SKU.MIN.FREE:"SPE_E3"}=2.'
+        - macro: '{$INT.M365.SKU.NOT_MATCHES}'
+          value: '^(FLOW_FREE|POWER_BI_STANDARD|WINDOWS_STORE|TEAMS_EXPLORATORY|CCIBOTS_PRIVPREV_VIRAL|POWERAPPS_VIRAL|STREAM|MCOPSTNC|RIGHTSMANAGEMENT_ADHOC)$'
+          description: 'Free / viral SKUs ignored.'
+        - macro: '{$INT.M365.SUB.EXPIRY.CHECK}'
+          value: '0'
+          description: 'Set {$INT.M365.SUB.EXPIRY.CHECK:"<SKU>"}=1 for subscriptions without auto-renewal.'
+        - macro: '{$INT.M365.SUB.EXPIRY.CRIT}'
+          value: '7'
+        - macro: '{$INT.M365.SUB.EXPIRY.WARN}'
+          value: '30'
+        - macro: '{$INT.M365.SYNC.MAX.AGE}'
+          value: 3h
+        - macro: '{$INT.M365.UNUSED.MAX}'
+          value: '0'
+  triggers:
+    - uuid: 0378c90ac5f34d72b24768a8cd3b1446
+      expression: 'last(/INT MON-M365 Tenant/int.m365.licensed.disabled)+last(/INT MON-M365 Tenant/int.m365.licensed.inactive)>{$INT.M365.UNUSED.MAX}'
+      name: 'INT: M365 has paid licences on disabled or inactive users'
+      opdata: 'Disabled: {ITEM.LASTVALUE1}, inactive: {ITEM.LASTVALUE2}'
+      priority: INFO
+      description: 'Report value (savings): licences on disabled users or users without sign-in for {$INT.M365.INACTIVE.DAYS} days.'
+      tags:
+        - tag: scope
+          value: capacity
