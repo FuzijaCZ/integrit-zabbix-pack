@@ -1,0 +1,215 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: bfb26e858d2f42599c383e7f8457fc25
+      name: Templates/Integrit/MON-LAN
+  templates:
+    - uuid: b234564b89e648d59501f73c143ebbdb
+      template: 'INT MON-LAN UniFi Network'
+      name: 'INT MON-LAN UniFi Network'
+      description: |
+        Integrit MON-LAN template for Ubiquiti UniFi devices behind a UniFi Network application 9.0+ (UniFi OS console:
+        UDM / UDR / UCG / Cloud Key Gen2+ / UniFi OS Server). Uses the official UniFi Network Integration API (read-only API key).
+        One host per UniFi site, monitored by the site proxy. Per device: access point offline AVERAGE, switch / gateway offline HIGH,
+        more than {$INT.UNIFI.AP.OFFLINE.MAX.PCT} % of APs offline HIGH, API unreachable AVERAGE.
+        No official Zabbix 7.0 template exists for UniFi.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-LAN
+      items:
+        - uuid: b812a8b47027403cadf6a2b4e5873ced
+          name: 'UniFi: Access points offline, in %'
+          type: DEPENDENT
+          key: int.unifi.ap.offline.pct
+          delay: '0'
+          value_type: FLOAT
+          units: '%'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var aps = JSON.parse(value).filter(function (d) {
+                      return (d.features || []).indexOf('accessPoint') !== -1;
+                  });
+                  if (aps.length === 0) {
+                      return 0;
+                  }
+                  var off = aps.filter(function (d) {
+                      return /^(OFFLINE|CONNECTION_INTERRUPTED|ISOLATED)$/.test(d.state);
+                  }).length;
+                  return off / aps.length * 100;
+          master_item:
+            key: int.unifi.devices
+          tags:
+            - tag: component
+              value: wifi
+          triggers:
+            - uuid: 6c84a6044a2c4d48b850e00b5a1e8cce
+              expression: 'min(/INT MON-LAN UniFi Network/int.unifi.ap.offline.pct,#2)>{$INT.UNIFI.AP.OFFLINE.MAX.PCT}'
+              name: 'INT: UniFi: more than {$INT.UNIFI.AP.OFFLINE.MAX.PCT}% of access points offline'
+              opdata: 'Offline: {{ITEM.LASTVALUE1}.fmtnum(0)}%'
+              priority: HIGH
+              description: 'Wi-Fi outage for a large part of the site (typically a PoE switch or uplink failure).'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: e92aa1437c124485b0e18b18a69a4d15
+          name: 'UniFi: Get devices'
+          type: HTTP_AGENT
+          key: int.unifi.devices
+          delay: 5m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          timeout: 20s
+          url: 'https://{HOST.CONN}/proxy/network/integration/v1/sites/{$INT.UNIFI.SITE.ID}/devices'
+          query_fields:
+            - name: limit
+              value: '200'
+          headers:
+            - name: X-API-KEY
+              value: '{$INT.UNIFI.API.KEY}'
+            - name: Accept
+              value: application/json
+          description: 'UniFi Network Integration API, list of adopted devices of the site (up to 200).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+          tags:
+            - tag: component
+              value: raw
+        - uuid: a8cdb9182cee4e45b373fd6f751d28c3
+          name: 'UniFi: Devices total'
+          type: DEPENDENT
+          key: int.unifi.devices.total
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.length()
+          master_item:
+            key: int.unifi.devices
+          tags:
+            - tag: component
+              value: controller
+          triggers:
+            - uuid: b8bcf6a154e34966ab1f4086d3cb8a5a
+              expression: 'nodata(/INT MON-LAN UniFi Network/int.unifi.devices.total,{$INT.UNIFI.NODATA})=1'
+              name: 'INT: UniFi Network API not reachable for {$INT.UNIFI.NODATA}'
+              priority: AVERAGE
+              description: 'Console down, API key revoked or network problem between site proxy and console. Device states are unknown meanwhile.'
+              tags:
+                - tag: scope
+                  value: availability
+      discovery_rules:
+        - uuid: d8ece33fdbee47be8c312f8756161dff
+          name: 'UniFi devices discovery'
+          type: DEPENDENT
+          key: int.unifi.devices.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#NAME}'
+                value: '{$INT.UNIFI.DEVICE.NAME.MATCHES}'
+                formulaid: A
+              - macro: '{#NAME}'
+                value: '{$INT.UNIFI.DEVICE.NAME.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: B
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: 8e13e6ea2e974ec0a8d23bd25fff2535
+              name: 'UniFi [{#ROLE}] {#NAME}: State'
+              type: DEPENDENT
+              key: 'int.unifi.device.state[{#ID}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'ONLINE, OFFLINE, CONNECTION_INTERRUPTED, ISOLATED, UPDATING, PENDING_ADOPTION, ... Model {#MODEL}, IP {#IP}.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.id==''{#ID}'')].state.first()'
+              master_item:
+                key: int.unifi.devices
+              tags:
+                - tag: component
+                  value: device
+                - tag: device
+                  value: '{#NAME}'
+              trigger_prototypes:
+                - uuid: 0612cc420a8b41f0818506aeaf25016b
+                  expression: 'count(/INT MON-LAN UniFi Network/int.unifi.device.state[{#ID}],#2,"regexp","^(OFFLINE|CONNECTION_INTERRUPTED|ISOLATED)$")=2 and {$INT.UNIFI.OFFLINE.HIGH:"{#ROLE}"}=1'
+                  name: 'INT: UniFi [{#ROLE}] {#NAME} is offline'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'For 2 checks (10 min) the switch or gateway does not report to the UniFi console. Model {#MODEL}, IP {#IP}.'
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: 61ca0cd4654e4bfc9589fe02d5735e96
+                  expression: 'count(/INT MON-LAN UniFi Network/int.unifi.device.state[{#ID}],#2,"regexp","^(OFFLINE|CONNECTION_INTERRUPTED|ISOLATED)$")=2 and {$INT.UNIFI.OFFLINE.HIGH:"{#ROLE}"}=0'
+                  name: 'INT: UniFi [{#ROLE}] {#NAME} is offline'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: AVERAGE
+                  description: 'Device does not report to the UniFi console. Model {#MODEL}, IP {#IP}.'
+                  tags:
+                    - tag: scope
+                      value: availability
+          master_item:
+            key: int.unifi.devices
+          lld_macro_paths:
+            - lld_macro: '{#ID}'
+              path: $.id
+            - lld_macro: '{#IP}'
+              path: $.ipAddress
+            - lld_macro: '{#MODEL}'
+              path: $.model
+            - lld_macro: '{#NAME}'
+              path: $.name
+            - lld_macro: '{#ROLE}'
+              path: $.role
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var d = JSON.parse(value);
+                  d.forEach(function (x) {
+                      var f = x.features || [];
+                      x.role = f.indexOf('gateway') !== -1 ? 'gateway' : (f.indexOf('switching') !== -1 ? 'switch' : (f.indexOf('accessPoint') !== -1 ? 'ap' : 'other'));
+                      if (!x.name) {
+                          x.name = x.macAddress || x.id;
+                      }
+                  });
+                  return JSON.stringify(d);
+      tags:
+        - tag: service
+          value: MON-LAN
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.UNIFI.AP.OFFLINE.MAX.PCT}'
+          value: '30'
+        - macro: '{$INT.UNIFI.API.KEY}'
+          type: SECRET_TEXT
+          description: 'UniFi Network → Settings → Control Plane → Integrations → Create API key.'
+        - macro: '{$INT.UNIFI.DEVICE.NAME.MATCHES}'
+          value: '.+'
+        - macro: '{$INT.UNIFI.DEVICE.NAME.NOT_MATCHES}'
+          value: '^$'
+          description: 'Devices not to monitor (spares, lab).'
+        - macro: '{$INT.UNIFI.NODATA}'
+          value: 15m
+        - macro: '{$INT.UNIFI.OFFLINE.HIGH}'
+          value: '0'
+          description: '1 = offline is HIGH for this role (context: gateway, switch, ap, other).'
+        - macro: '{$INT.UNIFI.OFFLINE.HIGH:"gateway"}'
+          value: '1'
+        - macro: '{$INT.UNIFI.OFFLINE.HIGH:"switch"}'
+          value: '1'
+        - macro: '{$INT.UNIFI.SITE.ID}'
+          description: 'Site UUID from GET /proxy/network/integration/v1/sites (see INSTALL.md).'

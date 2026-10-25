@@ -1,0 +1,450 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: bfb26e858d2f42599c383e7f8457fc25
+      name: Templates/Integrit/MON-LAN
+  templates:
+    - uuid: 72b15184e22b447d9741314ca1c916e6
+      template: 'INT MON-LAN Switch base'
+      name: 'INT MON-LAN Switch base'
+      description: |
+        Integrit MON-LAN vendor-neutral part for switches (IF-MIB, POWER-ETHERNET-MIB / RFC 3621). Not linked directly to hosts:
+        it is linked by the INT MON-LAN vendor wrappers.
+        Uplinks: ports whose description (ifAlias) matches {$INT.LAN.UPLINK.IFALIAS.MATCHES} (Integrit convention UPL-/LAG-):
+        link down HIGH, utilisation WARNING, errors WARNING.
+        PoE: budget used WARNING, ports in fault AVERAGE (switches without PoE simply have no PoE values).
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-LAN
+      items:
+        - uuid: a20f52ba0f88423f9a5617de119ab11e
+          name: 'INT: Uplink ports: SNMP walk'
+          type: SNMP_AGENT
+          snmp_oid: 'walk[1.3.6.1.2.1.2.2.1.8,1.3.6.1.2.1.31.1.1.1.1,1.3.6.1.2.1.31.1.1.1.18,1.3.6.1.2.1.31.1.1.1.6,1.3.6.1.2.1.31.1.1.1.10,1.3.6.1.2.1.31.1.1.1.15,1.3.6.1.2.1.2.2.1.14,1.3.6.1.2.1.2.2.1.20]'
+          key: int.lan.if.walk
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'ifOperStatus, ifName, ifAlias, ifHCInOctets, ifHCOutOctets, ifHighSpeed, ifInErrors, ifOutErrors.'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 5f8e933f49fe485ab2e5d5f9c4f80ea1
+          name: 'INT: PoE: Budget used'
+          type: DEPENDENT
+          key: int.lan.poe.budget.pused
+          delay: '0'
+          value_type: FLOAT
+          units: '%'
+          description: 'Sum of pethMainPseConsumptionPower / sum of pethMainPsePower over all PSE groups (stack members).'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var power = 0, used = 0;
+                  value.split('\n').forEach(function (line) {
+                      var m = line.match(/^\.?1\.3\.6\.1\.2\.1\.105\.1\.3\.1\.1\.(2|4)\.\d+\s*=\s*(?:\w+:\s*)?(\d+)/);
+                      if (m) {
+                          if (m[1] === '2') { power += parseInt(m[2], 10); } else { used += parseInt(m[2], 10); }
+                      }
+                  });
+                  if (power === 0) {
+                      throw 'No PoE budget reported.';
+                  }
+                  return used / power * 100;
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.lan.poe.walk
+          tags:
+            - tag: component
+              value: poe
+          triggers:
+            - uuid: 81309b42b845421bb8d8b0ce2bd8dbee
+              expression: 'min(/INT MON-LAN Switch base/int.lan.poe.budget.pused,15m)>{$INT.LAN.POE.BUDGET.MAX}'
+              name: 'INT: PoE budget above {$INT.LAN.POE.BUDGET.MAX}%'
+              opdata: 'Used: {{ITEM.LASTVALUE1}.fmtnum(1)}%'
+              priority: WARNING
+              description: 'New PoE devices (APs, phones, cameras) may not get power; the switch may shut down low-priority ports.'
+              tags:
+                - tag: scope
+                  value: capacity
+        - uuid: 1ba5a0fed7554040b5851a70c575df5b
+          name: 'INT: PoE: Ports in fault'
+          type: DEPENDENT
+          key: int.lan.poe.ports.fault
+          delay: '0'
+          description: 'Ports with pethPsePortDetectionStatus fault(4) or otherFault(6).'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var n = 0, seen = false;
+                  value.split('\n').forEach(function (line) {
+                      var m = line.match(/^\.?1\.3\.6\.1\.2\.1\.105\.1\.1\.1\.6\.[\d.]+\s*=\s*(?:\w+:\s*)?(\d+)/);
+                      if (m) {
+                          seen = true;
+                          if (m[1] === '4' || m[1] === '6') { n++; }
+                      }
+                  });
+                  if (!seen) {
+                      throw 'No PoE ports reported.';
+                  }
+                  return n;
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.lan.poe.walk
+          tags:
+            - tag: component
+              value: poe
+          triggers:
+            - uuid: 46bd8a05212640eeba523ee340961ea2
+              expression: 'min(/INT MON-LAN Switch base/int.lan.poe.ports.fault,#2)>0'
+              name: 'INT: PoE fault on {ITEM.LASTVALUE1} port(s)'
+              priority: AVERAGE
+              description: 'The connected device is not powered (short, overload or faulty cable/device). Check the switch PoE status page.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: dc572baa18a14986bd13393600309948
+          name: 'INT: PoE: SNMP walk'
+          type: SNMP_AGENT
+          snmp_oid: 'walk[1.3.6.1.2.1.105.1.3.1.1.2,1.3.6.1.2.1.105.1.3.1.1.4,1.3.6.1.2.1.105.1.1.1.6]'
+          key: int.lan.poe.walk
+          delay: 5m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'POWER-ETHERNET-MIB: pethMainPsePower, pethMainPseConsumptionPower, pethPsePortDetectionStatus.'
+          tags:
+            - tag: component
+              value: raw
+      discovery_rules:
+        - uuid: c40744a5ed9f4005adc43a4dcf8febb6
+          name: 'INT: Uplink ports discovery'
+          type: DEPENDENT
+          key: int.lan.uplink.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#IFALIAS}'
+                value: '{$INT.LAN.UPLINK.IFALIAS.MATCHES}'
+                formulaid: A
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Ports described UPL-... or LAG-... (uplinks, LAG members, links to other switches / firewall).'
+          item_prototypes:
+            - uuid: 45171fc7aed74f5a9f28f4fae92d54ee
+              name: 'INT: Uplink {#IFNAME}({#IFALIAS}): Bits received'
+              type: DEPENDENT
+              key: 'int.lan.uplink.in[{#SNMPINDEX}]'
+              delay: '0'
+              units: bps
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.2.1.31.1.1.1.6.{#SNMPINDEX}'
+                    - '0'
+                - type: CHANGE_PER_SECOND
+                  parameters:
+                    - ''
+                - type: MULTIPLIER
+                  parameters:
+                    - '8'
+              master_item:
+                key: int.lan.if.walk
+              tags:
+                - tag: component
+                  value: uplink
+                - tag: interface
+                  value: '{#IFNAME}'
+            - uuid: bb8bbf23572047c5877cc2d993d70260
+              name: 'INT: Uplink {#IFNAME}({#IFALIAS}): Inbound errors'
+              type: DEPENDENT
+              key: 'int.lan.uplink.in.errors[{#SNMPINDEX}]'
+              delay: '0'
+              value_type: FLOAT
+              units: eps
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.2.1.2.2.1.14.{#SNMPINDEX}'
+                    - '0'
+                - type: CHANGE_PER_SECOND
+                  parameters:
+                    - ''
+              master_item:
+                key: int.lan.if.walk
+              tags:
+                - tag: component
+                  value: uplink
+                - tag: interface
+                  value: '{#IFNAME}'
+            - uuid: 827ff1e90e41400ebda01837c3e344cd
+              name: 'INT: Uplink {#IFNAME}({#IFALIAS}): Bits sent'
+              type: DEPENDENT
+              key: 'int.lan.uplink.out[{#SNMPINDEX}]'
+              delay: '0'
+              units: bps
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.2.1.31.1.1.1.10.{#SNMPINDEX}'
+                    - '0'
+                - type: CHANGE_PER_SECOND
+                  parameters:
+                    - ''
+                - type: MULTIPLIER
+                  parameters:
+                    - '8'
+              master_item:
+                key: int.lan.if.walk
+              tags:
+                - tag: component
+                  value: uplink
+                - tag: interface
+                  value: '{#IFNAME}'
+            - uuid: 70a6015d0f0246bab46956c7e20dd4ec
+              name: 'INT: Uplink {#IFNAME}({#IFALIAS}): Outbound errors'
+              type: DEPENDENT
+              key: 'int.lan.uplink.out.errors[{#SNMPINDEX}]'
+              delay: '0'
+              value_type: FLOAT
+              units: eps
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.2.1.2.2.1.20.{#SNMPINDEX}'
+                    - '0'
+                - type: CHANGE_PER_SECOND
+                  parameters:
+                    - ''
+              master_item:
+                key: int.lan.if.walk
+              tags:
+                - tag: component
+                  value: uplink
+                - tag: interface
+                  value: '{#IFNAME}'
+            - uuid: 534348bbfa5c44c39bc357f65fc32078
+              name: 'INT: Uplink {#IFNAME}({#IFALIAS}): Speed'
+              type: DEPENDENT
+              key: 'int.lan.uplink.speed[{#SNMPINDEX}]'
+              delay: '0'
+              units: bps
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.2.1.31.1.1.1.15.{#SNMPINDEX}'
+                    - '0'
+                - type: MULTIPLIER
+                  parameters:
+                    - '1000000'
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1h
+              master_item:
+                key: int.lan.if.walk
+              tags:
+                - tag: component
+                  value: uplink
+                - tag: interface
+                  value: '{#IFNAME}'
+            - uuid: b73c93e618994476893a66f38073f263
+              name: 'INT: Uplink {#IFNAME}({#IFALIAS}): Operational status'
+              type: DEPENDENT
+              key: 'int.lan.uplink.status[{#SNMPINDEX}]'
+              delay: '0'
+              valuemap:
+                name: 'INT ifOperStatus'
+              preprocessing:
+                - type: SNMP_WALK_VALUE
+                  parameters:
+                    - '1.3.6.1.2.1.2.2.1.8.{#SNMPINDEX}'
+                    - '0'
+              master_item:
+                key: int.lan.if.walk
+              tags:
+                - tag: component
+                  value: uplink
+                - tag: interface
+                  value: '{#IFNAME}'
+              trigger_prototypes:
+                - uuid: 812aed2154ac4a4bb731f55832cc70a0
+                  expression: 'min(/INT MON-LAN Switch base/int.lan.uplink.status[{#SNMPINDEX}],#2)>1'
+                  name: 'INT: Uplink {#IFNAME}({#IFALIAS}) is down'
+                  opdata: 'Status: {ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'Uplink or LAG member is down for 2 checks. Devices behind it may be cut off or the LAG runs without redundancy.'
+                  tags:
+                    - tag: scope
+                      value: availability
+          trigger_prototypes:
+            - uuid: 091ad563e0fa4ad4867caad146b10342
+              expression: |
+                (avg(/INT MON-LAN Switch base/int.lan.uplink.in[{#SNMPINDEX}],15m)>({$INT.LAN.UPLINK.UTIL.MAX}/100)*last(/INT MON-LAN Switch base/int.lan.uplink.speed[{#SNMPINDEX}])
+                or avg(/INT MON-LAN Switch base/int.lan.uplink.out[{#SNMPINDEX}],15m)>({$INT.LAN.UPLINK.UTIL.MAX}/100)*last(/INT MON-LAN Switch base/int.lan.uplink.speed[{#SNMPINDEX}]))
+                and last(/INT MON-LAN Switch base/int.lan.uplink.speed[{#SNMPINDEX}])>0
+              name: 'INT: Uplink {#IFNAME}({#IFALIAS}): utilisation above {$INT.LAN.UPLINK.UTIL.MAX}% for 15 min'
+              priority: WARNING
+              tags:
+                - tag: scope
+                  value: performance
+            - uuid: 91536c9314f3455a846be9e0f379e6d9
+              expression: 'min(/INT MON-LAN Switch base/int.lan.uplink.in.errors[{#SNMPINDEX}],5m)>{$INT.LAN.UPLINK.ERRORS.MAX} or min(/INT MON-LAN Switch base/int.lan.uplink.out.errors[{#SNMPINDEX}],5m)>{$INT.LAN.UPLINK.ERRORS.MAX}'
+              name: 'INT: Uplink {#IFNAME}({#IFALIAS}): error rate above {$INT.LAN.UPLINK.ERRORS.MAX}/s'
+              priority: WARNING
+              description: 'Cabling, SFP or duplex problem on an uplink.'
+              tags:
+                - tag: scope
+                  value: performance
+          master_item:
+            key: int.lan.if.walk
+          preprocessing:
+            - type: SNMP_WALK_TO_JSON
+              parameters:
+                - '{#IFNAME}'
+                - 1.3.6.1.2.1.31.1.1.1.1
+                - '0'
+                - '{#IFALIAS}'
+                - 1.3.6.1.2.1.31.1.1.1.18
+                - '0'
+      tags:
+        - tag: service
+          value: MON-LAN
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.LAN.POE.BUDGET.MAX}'
+          value: '90'
+        - macro: '{$INT.LAN.UPLINK.ERRORS.MAX}'
+          value: '2'
+          description: 'Errors per second on an uplink for WARNING.'
+        - macro: '{$INT.LAN.UPLINK.IFALIAS.MATCHES}'
+          value: '^(UPL|LAG)'
+          description: 'Integrit port description convention for uplinks / LAG members.'
+        - macro: '{$INT.LAN.UPLINK.UTIL.MAX}'
+          value: '90'
+      valuemaps:
+        - uuid: b615ae01a4474a968600eb31f0ac1b3d
+          name: 'INT ifOperStatus'
+          mappings:
+            - value: '1'
+              newvalue: up
+            - value: '2'
+              newvalue: down
+            - value: '3'
+              newvalue: testing
+            - value: '4'
+              newvalue: unknown
+            - value: '5'
+              newvalue: dormant
+            - value: '6'
+              newvalue: notPresent
+            - value: '7'
+              newvalue: lowerLayerDown
+    - uuid: f88d919f0d7741b39b7d9349a312c0b9
+      template: 'INT MON-LAN Cisco IOS'
+      name: 'INT MON-LAN Cisco IOS'
+      description: |
+        Integrit MON-LAN wrapper: Cisco Catalyst / IOS and IOS-XE switches.
+        Links the official 'Cisco IOS by SNMP' and 'INT MON-LAN Switch base'.
+        Official port discovery is limited to ports described by the Integrit convention
+        ({$NET.IF.IFALIAS.MATCHES} = CRIT-/SRV-/AP-): link down AVERAGE, errors and bandwidth WARNING.
+        Uplinks (UPL-/LAG-) are handled by the switch base (HIGH). Undescribed access ports are not alerted.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'Cisco IOS by SNMP'
+        - name: 'INT MON-LAN Switch base'
+      groups:
+        - name: Templates/Integrit/MON-LAN
+      tags:
+        - tag: service
+          value: MON-LAN
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$NET.IF.IFALIAS.MATCHES}'
+          value: '^(CRIT|SRV|AP)'
+          description: 'Only ports with an Integrit description are discovered by the official template (critical ports, servers, access points).'
+    - uuid: 596be9ddad864d48a4bb944972756f25
+      template: 'INT MON-LAN HPE Aruba'
+      name: 'INT MON-LAN HPE Aruba'
+      description: |
+        Integrit MON-LAN wrapper: HPE Aruba / ProCurve (ArubaOS-Switch) switches.
+        Links the official 'HP Enterprise Switch by SNMP' and 'INT MON-LAN Switch base'.
+        Official port discovery is limited to ports described by the Integrit convention
+        ({$NET.IF.IFALIAS.MATCHES} = CRIT-/SRV-/AP-): link down AVERAGE, errors and bandwidth WARNING.
+        Uplinks (UPL-/LAG-) are handled by the switch base (HIGH). Undescribed access ports are not alerted.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'HP Enterprise Switch by SNMP'
+        - name: 'INT MON-LAN Switch base'
+      groups:
+        - name: Templates/Integrit/MON-LAN
+      tags:
+        - tag: service
+          value: MON-LAN
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$NET.IF.IFALIAS.MATCHES}'
+          value: '^(CRIT|SRV|AP)'
+          description: 'Only ports with an Integrit description are discovered by the official template (critical ports, servers, access points).'
+    - uuid: f45aa86bd92a40c2a5423956578769e6
+      template: 'INT MON-LAN MikroTik'
+      name: 'INT MON-LAN MikroTik'
+      description: |
+        Integrit MON-LAN wrapper: MikroTik CRS / CSS switches running RouterOS or SwOS with SNMP.
+        Links the official 'Mikrotik by SNMP' and 'INT MON-LAN Switch base'.
+        Official port discovery is limited to ports described by the Integrit convention
+        ({$NET.IF.IFALIAS.MATCHES} = CRIT-/SRV-/AP-): link down AVERAGE, errors and bandwidth WARNING.
+        Uplinks (UPL-/LAG-) are handled by the switch base (HIGH). Undescribed access ports are not alerted.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'Mikrotik by SNMP'
+        - name: 'INT MON-LAN Switch base'
+      groups:
+        - name: Templates/Integrit/MON-LAN
+      tags:
+        - tag: service
+          value: MON-LAN
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$NET.IF.IFALIAS.MATCHES}'
+          value: '^(CRIT|SRV|AP)'
+          description: 'Only ports with an Integrit description are discovered by the official template (critical ports, servers, access points).'
+    - uuid: 16e5b72c1fb142c8830aff1edeceb583
+      template: 'INT MON-LAN Generic SNMP'
+      name: 'INT MON-LAN Generic SNMP'
+      description: |
+        Integrit MON-LAN wrapper: Ubiquiti UniFi switches and any other switch with standard IF-MIB (TP-Link, Netgear, Zyxel, D-Link, ...).
+        Links the official 'Network Generic Device by SNMP' and 'INT MON-LAN Switch base'.
+        Official port discovery is limited to ports described by the Integrit convention
+        ({$NET.IF.IFALIAS.MATCHES} = CRIT-/SRV-/AP-): link down AVERAGE, errors and bandwidth WARNING.
+        Uplinks (UPL-/LAG-) are handled by the switch base (HIGH). Undescribed access ports are not alerted.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'Network Generic Device by SNMP'
+        - name: 'INT MON-LAN Switch base'
+      groups:
+        - name: Templates/Integrit/MON-LAN
+      tags:
+        - tag: service
+          value: MON-LAN
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$NET.IF.IFALIAS.MATCHES}'
+          value: '^(CRIT|SRV|AP)'
+          description: 'Only ports with an Integrit description are discovered by the official template (critical ports, servers, access points).'
