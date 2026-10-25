@@ -1,0 +1,431 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 80321abb105b4e9aa44afb253e75bb87
+      name: Templates/Integrit/MON-CERT
+  templates:
+    - uuid: 68079f4d0a4d4d5f9f2eed0170265649
+      template: 'INT MON-CERT Endpoints'
+      name: 'INT MON-CERT Endpoints'
+      description: |
+        Integrit MON-CERT: internal TLS endpoints (HTTPS, LDAPS, SMTP/LDAP STARTTLS, RDP) and AD CS CRL distribution points,
+        checked by the site proxy (ExternalScript int-cert-check.py). Linked on one probe host per customer site.
+        Endpoints and CDP URLs are listed in host macros. Public web / domain certificates stay in MON-WEB / MON-DNS.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-CERT
+      discovery_rules:
+        - uuid: 78922e99cd8c432fad7710f1812bbd70
+          name: 'CRL distribution points from {$INT.CERT.CRL.URLS}'
+          type: SCRIPT
+          key: 'int.cert.discovery[crl]'
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), names = String(p.fields).split(','), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.replace(/\\\|/g, '\u0001').split('|').map(function (x) { return x.replace(/\u0001/g, '|'); }), row = {};
+                if (f.length !== names.length) {
+                    throw 'Entry "' + entry + '" needs ' + names.length + ' fields separated by |: ' + p.fields;
+                }
+                names.forEach(function (n, i) { row[n.trim()] = f[i].trim(); });
+                out.push(row);
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: fields
+              value: '{#LABEL},{#URL}'
+            - name: list
+              value: '{$INT.CERT.CRL.URLS}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Entries label|http-url-of-crl separated by ;.'
+          item_prototypes:
+            - uuid: e41440737793414abdcdfea4f51fcf88
+              name: 'CRL {#LABEL}: Raw'
+              type: EXTERNAL
+              key: 'int-cert-check.py["crl","{#URL}"]'
+              delay: '{$INT.CERT.CRL.INTERVAL}'
+              history: '0'
+              value_type: TEXT
+              trends: '0'
+              timeout: 30s
+              tags:
+                - tag: component
+                  value: raw
+            - uuid: 29ab958110d04584b10e3ad8a5753d52
+              name: 'CRL {#LABEL}: Age'
+              type: DEPENDENT
+              key: 'int.cert.crl.age["{#LABEL}"]'
+              delay: '0'
+              value_type: FLOAT
+              units: h
+              description: 'Hours since thisUpdate.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.age_hours'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: 'int-cert-check.py["crl","{#URL}"]'
+              tags:
+                - tag: component
+                  value: crl
+            - uuid: 3a4d30a87152424081a14320d77f6591
+              name: 'CRL {#LABEL}: Download OK'
+              type: DEPENDENT
+              key: 'int.cert.crl.ok["{#LABEL}"]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.ok'
+                  error_handler: DISCARD_VALUE
+              valuemap:
+                name: 'INT CERT yes/no'
+              master_item:
+                key: 'int-cert-check.py["crl","{#URL}"]'
+              tags:
+                - tag: component
+                  value: crl
+            - uuid: 3a372d15d2114f5b92b66e53a84d939b
+              name: 'CRL {#LABEL}: Error'
+              type: DEPENDENT
+              key: 'int.cert.crl.error["{#LABEL}"]'
+              delay: '0'
+              value_type: TEXT
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.error'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: 'int-cert-check.py["crl","{#URL}"]'
+              tags:
+                - tag: component
+                  value: crl
+            - uuid: 1ec2f1933b544a2f998310f3d85c2bf0
+              name: 'CRL {#LABEL}: Hours to nextUpdate'
+              type: DEPENDENT
+              key: 'int.cert.crl.hours["{#LABEL}"]'
+              delay: '0'
+              value_type: FLOAT
+              units: h
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.hours_left'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: 'int-cert-check.py["crl","{#URL}"]'
+              tags:
+                - tag: component
+                  value: crl
+          trigger_prototypes:
+            - uuid: caccee47e45547f280eeaa26d6658815
+              expression: 'last(/INT MON-CERT Endpoints/int.cert.crl.hours["{#LABEL}"])<{$INT.CERT.CRL.HOURS:"{#LABEL}"}'
+              name: 'INT: CRL {#LABEL} expires in {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'The CA did not publish a new CRL. After nextUpdate every certificate check (VPN, 802.1X Wi-Fi, smart card, LDAPS) fails. Check CertSvc and the CRL publishing task on the CA.'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: ba17adb6d45c42c09102bba815fcc3ed
+              expression: 'max(/INT MON-CERT Endpoints/int.cert.crl.ok["{#LABEL}"],{$INT.CERT.CRL.FAIL.TIME})=0'
+              name: 'INT: CRL {#LABEL} cannot be downloaded'
+              priority: HIGH
+              description: 'CDP URL not reachable for {$INT.CERT.CRL.FAIL.TIME} (web server / IIS on the CA, DNS, file missing). Clients that check revocation fail.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 8ae7f2871b724ea88c2f634ee9eb60d8
+          name: 'Endpoints from {$INT.CERT.ENDPOINTS}'
+          type: SCRIPT
+          key: 'int.cert.discovery[endpoint]'
+          delay: 1h
+          params: |
+            var p = JSON.parse(value), names = String(p.fields).split(','), out = [];
+            String(p.list).split(';').forEach(function (entry) {
+                if (!entry.trim()) {
+                    return;
+                }
+                var f = entry.replace(/\\\|/g, '\u0001').split('|').map(function (x) { return x.replace(/\u0001/g, '|'); }), row = {};
+                if (f.length !== names.length) {
+                    throw 'Entry "' + entry + '" needs ' + names.length + ' fields separated by |: ' + p.fields;
+                }
+                names.forEach(function (n, i) { row[n.trim()] = f[i].trim(); });
+                out.push(row);
+            });
+            return JSON.stringify(out);
+          parameters:
+            - name: fields
+              value: '{#LABEL},{#HOST},{#PORT},{#MODE}'
+            - name: list
+              value: '{$INT.CERT.ENDPOINTS}'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Entries label|host|port|mode separated by ; (mode tls, smtp, ldap or rdp).'
+          item_prototypes:
+            - uuid: 2afa1370006c43b2bddc5ad895d7b16d
+              name: '{#LABEL}: Certificate raw'
+              type: EXTERNAL
+              key: 'int-cert-check.py["tls","{#HOST}","{#PORT}","{#MODE}"]'
+              delay: '{$INT.CERT.INTERVAL}'
+              history: '0'
+              value_type: TEXT
+              trends: '0'
+              timeout: 30s
+              tags:
+                - tag: component
+                  value: raw
+                - tag: endpoint
+                  value: '{#LABEL}'
+            - uuid: 56e2114601484ba993ef8261fc2c1b54
+              name: '{#LABEL}: Certificate age'
+              type: DEPENDENT
+              key: 'int.cert.age["{#LABEL}"]'
+              delay: '0'
+              units: d
+              description: 'Days since notBefore.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.age_days'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: 'int-cert-check.py["tls","{#HOST}","{#PORT}","{#MODE}"]'
+              tags:
+                - tag: component
+                  value: certificate
+                - tag: endpoint
+                  value: '{#LABEL}'
+            - uuid: 50ddce4df120437d849830747bd228c3
+              name: '{#LABEL}: Certificate days left'
+              type: DEPENDENT
+              key: 'int.cert.days["{#LABEL}"]'
+              delay: '0'
+              units: d
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.days'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: 'int-cert-check.py["tls","{#HOST}","{#PORT}","{#MODE}"]'
+              tags:
+                - tag: component
+                  value: certificate
+                - tag: endpoint
+                  value: '{#LABEL}'
+            - uuid: d07829873fbe44dd94a3c5fe3b4ea16e
+              name: '{#LABEL}: Certificate issuer'
+              type: DEPENDENT
+              key: 'int.cert.issuer["{#LABEL}"]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.issuer'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: 'int-cert-check.py["tls","{#HOST}","{#PORT}","{#MODE}"]'
+              tags:
+                - tag: component
+                  value: certificate
+                - tag: endpoint
+                  value: '{#LABEL}'
+            - uuid: 4b71f23a77854b92bac10c5ef114bf79
+              name: '{#LABEL}: Certificate subject'
+              type: DEPENDENT
+              key: 'int.cert.subject["{#LABEL}"]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.subject'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: 'int-cert-check.py["tls","{#HOST}","{#PORT}","{#MODE}"]'
+              tags:
+                - tag: component
+                  value: certificate
+                - tag: endpoint
+                  value: '{#LABEL}'
+            - uuid: 2faa5d74ceb2472986147340b26f7257
+              name: '{#LABEL}: Certificate valid'
+              type: DEPENDENT
+              key: 'int.cert.valid["{#LABEL}"]'
+              delay: '0'
+              description: '1 = chain trusted by the proxy trust store and host name matches.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.valid'
+                  error_handler: DISCARD_VALUE
+              valuemap:
+                name: 'INT CERT yes/no'
+              master_item:
+                key: 'int-cert-check.py["tls","{#HOST}","{#PORT}","{#MODE}"]'
+              tags:
+                - tag: component
+                  value: certificate
+                - tag: endpoint
+                  value: '{#LABEL}'
+            - uuid: ced208589c2744668610b0ff3f0a02ac
+              name: '{#LABEL}: Check error'
+              type: DEPENDENT
+              key: 'int.cert.error["{#LABEL}"]'
+              delay: '0'
+              value_type: TEXT
+              trends: '0'
+              description: 'Empty = check ran.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.error'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: 'int-cert-check.py["tls","{#HOST}","{#PORT}","{#MODE}"]'
+              tags:
+                - tag: component
+                  value: certificate
+                - tag: endpoint
+                  value: '{#LABEL}'
+            - uuid: d06d362d955b4f72907ad644d1293493
+              name: '{#LABEL}: Verify error'
+              type: DEPENDENT
+              key: 'int.cert.verify["{#LABEL}"]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.verify_error'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: 'int-cert-check.py["tls","{#HOST}","{#PORT}","{#MODE}"]'
+              tags:
+                - tag: component
+                  value: certificate
+                - tag: endpoint
+                  value: '{#LABEL}'
+          trigger_prototypes:
+            - uuid: 52dffa793835489d87925391d9fa2446
+              expression: 'last(/INT MON-CERT Endpoints/int.cert.days["{#LABEL}"])<0 or (last(/INT MON-CERT Endpoints/int.cert.valid["{#LABEL}"])=0 and {$INT.CERT.VERIFY:"{#LABEL}"}=1)'
+              name: 'INT: Certificate {#LABEL} is expired or invalid'
+              priority: HIGH
+              description: 'Expired, untrusted chain or host name mismatch (item "{#LABEL}: Verify error"). Internal CA: its root must be in the proxy trust store. Self-signed device: set {$INT.CERT.VERIFY:"{#LABEL}"}=0.'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: 1ec62fffac344f38bf25075e2d8fcc98
+              expression: 'last(/INT MON-CERT Endpoints/int.cert.days["{#LABEL}"])<{$INT.CERT.DAYS.HIGH:"{#LABEL}"}'
+              name: 'INT: Certificate {#LABEL} expires in {ITEM.LASTVALUE1} (< {$INT.CERT.DAYS.HIGH:"{#LABEL}"} d)'
+              priority: HIGH
+              dependencies:
+                - name: 'INT: Certificate {#LABEL} is expired or invalid'
+                  expression: 'last(/INT MON-CERT Endpoints/int.cert.days["{#LABEL}"])<0 or (last(/INT MON-CERT Endpoints/int.cert.valid["{#LABEL}"])=0 and {$INT.CERT.VERIFY:"{#LABEL}"}=1)'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: c0119fc0a61e4aec9e736388b7c8ce38
+              expression: 'last(/INT MON-CERT Endpoints/int.cert.days["{#LABEL}"])<{$INT.CERT.DAYS.AVERAGE:"{#LABEL}"}'
+              name: 'INT: Certificate {#LABEL} expires in {ITEM.LASTVALUE1} (< {$INT.CERT.DAYS.AVERAGE:"{#LABEL}"} d)'
+              priority: AVERAGE
+              dependencies:
+                - name: 'INT: Certificate {#LABEL} expires in {ITEM.LASTVALUE1} (< {$INT.CERT.DAYS.HIGH:"{#LABEL}"} d)'
+                  expression: 'last(/INT MON-CERT Endpoints/int.cert.days["{#LABEL}"])<{$INT.CERT.DAYS.HIGH:"{#LABEL}"}'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: 773ae2cdf4cd448695e1ac585ce249ef
+              expression: 'last(/INT MON-CERT Endpoints/int.cert.days["{#LABEL}"])<{$INT.CERT.DAYS.WARN:"{#LABEL}"}'
+              name: 'INT: Certificate {#LABEL} expires in {ITEM.LASTVALUE1} (< {$INT.CERT.DAYS.WARN:"{#LABEL}"} d)'
+              priority: WARNING
+              description: 'Plan the renewal (report: certificate calendar).'
+              dependencies:
+                - name: 'INT: Certificate {#LABEL} expires in {ITEM.LASTVALUE1} (< {$INT.CERT.DAYS.AVERAGE:"{#LABEL}"} d)'
+                  expression: 'last(/INT MON-CERT Endpoints/int.cert.days["{#LABEL}"])<{$INT.CERT.DAYS.AVERAGE:"{#LABEL}"}'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: a685622d2a8f40b6bcc76eed7f75d680
+              expression: 'last(/INT MON-CERT Endpoints/int.cert.age["{#LABEL}"])>{$INT.CERT.ACME.AGE} and find(/INT MON-CERT Endpoints/int.cert.issuer["{#LABEL}"],,"regexp","{$INT.CERT.ACME.ISSUER}")=1'
+              name: 'INT: ACME certificate {#LABEL} was not renewed ({ITEM.LASTVALUE1} old)'
+              priority: WARNING
+              description: 'Automatic renewal (Lets Encrypt / ACME client) renews at ~60 days; an older certificate means the automation is broken.'
+              dependencies:
+                - name: 'INT: Certificate {#LABEL} expires in {ITEM.LASTVALUE1} (< {$INT.CERT.DAYS.WARN:"{#LABEL}"} d)'
+                  expression: 'last(/INT MON-CERT Endpoints/int.cert.days["{#LABEL}"])<{$INT.CERT.DAYS.WARN:"{#LABEL}"}'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: 4ac818da3a2f496abe2331647d5b5bb9
+              expression: 'length(last(/INT MON-CERT Endpoints/int.cert.error["{#LABEL}"],#1))>0 and length(last(/INT MON-CERT Endpoints/int.cert.error["{#LABEL}"],#2))>0'
+              name: 'INT: Certificate {#LABEL} cannot be checked'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Two checks in a row failed (host down, port closed, protocol mismatch). Error in item "{#LABEL}: Check error".'
+              tags:
+                - tag: scope
+                  value: monitoring
+            - uuid: 6e2291ae07b747e6b0a01c64f621028f
+              expression: 'nodata(/INT MON-CERT Endpoints/int.cert.error["{#LABEL}"],{$INT.CERT.NODATA})=1'
+              name: 'INT: Certificate {#LABEL} check returns no data'
+              priority: WARNING
+              description: 'ExternalScript int-cert-check.py missing on the site proxy or timing out.'
+              tags:
+                - tag: scope
+                  value: monitoring
+      tags:
+        - tag: service
+          value: MON-CERT
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.CERT.ACME.AGE}'
+          value: '60'
+          description: 'Days. ACME certificates older than this were not auto-renewed.'
+        - macro: '{$INT.CERT.ACME.ISSUER}'
+          value: '^(R1[0-4]|R[3-9]|E[1-9]|E1[0-4]|ZeroSSL.*|.*Let''s Encrypt.*)$'
+          description: 'Issuer CN regex of ACME CAs (Let''s Encrypt intermediates, ZeroSSL).'
+        - macro: '{$INT.CERT.CRL.FAIL.TIME}'
+          value: 1h
+        - macro: '{$INT.CERT.CRL.HOURS}'
+          value: '24'
+          description: 'HIGH when nextUpdate is closer than this many hours.'
+        - macro: '{$INT.CERT.CRL.INTERVAL}'
+          value: 15m
+        - macro: '{$INT.CERT.CRL.URLS}'
+          description: 'label|url;... e.g. Acme CA|http://pki.acme.local/CertEnroll/Acme-CA.crl. Empty = none.'
+        - macro: '{$INT.CERT.DAYS.AVERAGE}'
+          value: '14'
+        - macro: '{$INT.CERT.DAYS.HIGH}'
+          value: '3'
+        - macro: '{$INT.CERT.DAYS.WARN}'
+          value: '30'
+        - macro: '{$INT.CERT.ENDPOINTS}'
+          description: 'label|host|port|mode;... e.g. RD Gateway|rdg.acme.cz|443|tls;DC01 LDAPS|dc01.acme.local|636|tls. Empty = none.'
+        - macro: '{$INT.CERT.INTERVAL}'
+          value: 1h
+        - macro: '{$INT.CERT.NODATA}'
+          value: 3h
+        - macro: '{$INT.CERT.VERIFY}'
+          value: '1'
+          description: '0 with context of a label = do not alert on chain / host name (self-signed device), e.g. {$INT.CERT.VERIFY:"Printer"}=0.'
+      valuemaps:
+        - uuid: 602c1599385245d3b834cc9178149433
+          name: 'INT CERT yes/no'
+          mappings:
+            - value: '0'
+              newvalue: 'no'
+            - value: '1'
+              newvalue: 'yes'

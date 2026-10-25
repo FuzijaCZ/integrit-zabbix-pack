@@ -1,0 +1,323 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 80321abb105b4e9aa44afb253e75bb87
+      name: Templates/Integrit/MON-CERT
+  templates:
+    - uuid: e2222b8c9b1f4d018e3e390c347d5338
+      template: 'INT MON-CERT Intune Apple'
+      name: 'INT MON-CERT Intune Apple'
+      description: |
+        Integrit MON-CERT: Apple tokens in Microsoft Intune (APNs certificate, VPP token, ADE/DEP token) via Microsoft Graph.
+        Linked on the customer's MON-M365 tenant host; uses the same credential macros {$MS365.TENANT.ID}, {$MS365.APP.ID},
+        {$MS365.PASSWORD} (Integrit Monitoring read app). Not configured tokens stay empty and do not alert.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-CERT
+      items:
+        - uuid: 35875a1f993843fbb244276b0a94093a
+          name: 'Apple tokens raw'
+          type: SCRIPT
+          key: int.cert.apple.get
+          delay: 12h
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          params: |
+            var p = JSON.parse(value);
+            var out = {error: '', apns_days: null, vpp_days: null, vpp_name: '', dep_days: null, dep_name: ''};
+            var token;
+
+            function request(method, url, body) {
+                var req = new HttpRequest();
+                if (p.http_proxy && p.http_proxy.indexOf('{$') !== 0) {
+                    req.setProxy(p.http_proxy);
+                }
+                if (token) {
+                    req.addHeader('Authorization: Bearer ' + token);
+                }
+                else {
+                    req.addHeader('Content-Type: application/x-www-form-urlencoded');
+                }
+                var resp = method === 'POST' ? req.post(url, body) : req.get(url);
+                return {status: req.getStatus(), body: resp ? JSON.parse(resp) : {}};
+            }
+
+            function days(iso) {
+                return Math.floor((Date.parse(iso) - Date.now()) / 86400000);
+            }
+
+            // Earliest expiry of a token list; 404 / empty = feature not used (value stays null, no alert).
+            function earliest(url, dateField, nameField) {
+                var r = request('GET', url);
+                if (r.status === 404 || r.status === 400) {
+                    return null;
+                }
+                if (r.status !== 200) {
+                    throw 'GET ' + url.replace(/^.*\.com/, '') + ' HTTP ' + r.status + ': ' + JSON.stringify(r.body).substring(0, 150);
+                }
+                var best = null;
+                (r.body.value || []).forEach(function (t) {
+                    if (!t[dateField]) {
+                        return;
+                    }
+                    var d = days(t[dateField]);
+                    if (best === null || d < best.days) {
+                        best = {days: d, name: String(t[nameField] || '')};
+                    }
+                });
+                return best;
+            }
+
+            try {
+                ['tenant_id', 'app_id', 'password'].forEach(function (f) {
+                    if (!p[f] || p[f].indexOf('{$') === 0) {
+                        throw 'Parameter ' + f + ' is not set (host macro).';
+                    }
+                });
+                var t = request('POST', 'https://login.microsoftonline.com/' + encodeURIComponent(p.tenant_id) + '/oauth2/v2.0/token',
+                    'grant_type=client_credentials&scope=' + encodeURIComponent('https://graph.microsoft.com/.default') +
+                    '&client_id=' + encodeURIComponent(p.app_id) + '&client_secret=' + encodeURIComponent(p.password));
+                if (!t.body.access_token) {
+                    throw 'Token request failed: HTTP ' + t.status + ' ' + JSON.stringify(t.body).substring(0, 150);
+                }
+                token = t.body.access_token;
+
+                var a = request('GET', 'https://graph.microsoft.com/v1.0/deviceManagement/applePushNotificationCertificate');
+                if (a.status === 200 && a.body.expirationDateTime) {
+                    out.apns_days = days(a.body.expirationDateTime);
+                }
+                else if (a.status !== 404) {
+                    throw 'GET applePushNotificationCertificate HTTP ' + a.status + ': ' + JSON.stringify(a.body).substring(0, 150);
+                }
+                var v = earliest('https://graph.microsoft.com/v1.0/deviceAppManagement/vppTokens', 'expirationDateTime', 'organizationName');
+                if (v) {
+                    out.vpp_days = v.days;
+                    out.vpp_name = v.name;
+                }
+                var d = earliest('https://graph.microsoft.com/beta/deviceManagement/depOnboardingSettings', 'tokenExpirationDateTime', 'tokenName');
+                if (d) {
+                    out.dep_days = d.days;
+                    out.dep_name = d.name;
+                }
+            }
+            catch (e) {
+                out.error = String(e).substring(0, 500);
+            }
+            return JSON.stringify(out);
+          timeout: 30s
+          parameters:
+            - name: app_id
+              value: '{$MS365.APP.ID}'
+            - name: http_proxy
+              value: '{$MS365.HTTP.PROXY}'
+            - name: password
+              value: '{$MS365.PASSWORD}'
+            - name: tenant_id
+              value: '{$MS365.TENANT.ID}'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 0a8977b79dd442e3972411b01f9dd15c
+          name: 'Apple: Probe error'
+          type: DEPENDENT
+          key: 'int.cert.apple.error'
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Empty = OK. Text = token / consent / permission error.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.error'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.cert.apple.get'
+          tags:
+            - tag: component
+              value: apple
+          triggers:
+            - uuid: e3a127ee8518459db6d1833ee1338102
+              expression: 'length(last(/INT MON-CERT Intune Apple/int.cert.apple.error,#1))>0 and length(last(/INT MON-CERT Intune Apple/int.cert.apple.error,#2))>0'
+              name: 'INT: Intune Apple token check fails'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Two runs in a row. Needs DeviceManagementServiceConfig.Read.All and DeviceManagementApps.Read.All on the Integrit Monitoring app (re-consent).'
+              tags:
+                - tag: scope
+                  value: monitoring
+            - uuid: 523b6383e4ee4a26ba8b5b819b04c843
+              expression: 'nodata(/INT MON-CERT Intune Apple/int.cert.apple.error,{$INT.CERT.APPLE.NODATA})=1'
+              name: 'INT: Intune Apple token check returns no data'
+              priority: AVERAGE
+              description: 'Script item times out or the external proxy is down.'
+              tags:
+                - tag: scope
+                  value: monitoring
+        - uuid: a8581bc3a3b94094acecee17d0df608d
+          name: 'Apple: APNs certificate days left'
+          type: DEPENDENT
+          key: 'int.cert.apple.apns.days'
+          delay: '0'
+          units: d
+          description: 'Empty = not configured in this tenant.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.apns_days'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.cert.apple.get'
+          tags:
+            - tag: component
+              value: apple
+          triggers:
+            - uuid: 1d0225b35e004c24afc51a3445cd3971
+              expression: 'last(/INT MON-CERT Intune Apple/int.cert.apple.apns.days)<{$INT.CERT.APPLE.DAYS.HIGH}'
+              name: 'INT: Intune APNs certificate expires in {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'Apple MDM push certificate. Renew with the SAME Apple ID; an expired or replaced certificate forces re-enrolment of every Apple device.'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: f165c095c8354c81a9fb65c608950add
+              expression: 'last(/INT MON-CERT Intune Apple/int.cert.apple.apns.days)<{$INT.CERT.APPLE.DAYS.WARN}'
+              name: 'INT: Intune APNs certificate expires in {ITEM.LASTVALUE1} (< {$INT.CERT.APPLE.DAYS.WARN} d)'
+              priority: AVERAGE
+              description: 'Renew in Intune → Tenant administration → Connectors and tokens (Apple Business / School Manager for VPP and ADE).'
+              dependencies:
+                - name: 'INT: Intune APNs certificate expires in {ITEM.LASTVALUE1}'
+                  expression: 'last(/INT MON-CERT Intune Apple/int.cert.apple.apns.days)<{$INT.CERT.APPLE.DAYS.HIGH}'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 3ddac1b85a524fa79e8bb49d9ae14833
+          name: 'Apple: VPP token days left'
+          type: DEPENDENT
+          key: 'int.cert.apple.vpp.days'
+          delay: '0'
+          units: d
+          description: 'Empty = not configured in this tenant.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.vpp_days'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.cert.apple.get'
+          tags:
+            - tag: component
+              value: apple
+          triggers:
+            - uuid: 7374869b973e4d40a521c537e8f76372
+              expression: 'last(/INT MON-CERT Intune Apple/int.cert.apple.vpp.days)<{$INT.CERT.APPLE.DAYS.HIGH}'
+              name: 'INT: Intune VPP token expires in {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'Apps and Books location token (earliest of all tokens).'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: 3025e01bfdb74796a0212aa2981312c0
+              expression: 'last(/INT MON-CERT Intune Apple/int.cert.apple.vpp.days)<{$INT.CERT.APPLE.DAYS.WARN}'
+              name: 'INT: Intune VPP token expires in {ITEM.LASTVALUE1} (< {$INT.CERT.APPLE.DAYS.WARN} d)'
+              priority: AVERAGE
+              description: 'Renew in Intune → Tenant administration → Connectors and tokens (Apple Business / School Manager for VPP and ADE).'
+              dependencies:
+                - name: 'INT: Intune VPP token expires in {ITEM.LASTVALUE1}'
+                  expression: 'last(/INT MON-CERT Intune Apple/int.cert.apple.vpp.days)<{$INT.CERT.APPLE.DAYS.HIGH}'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: bdc9325aa8a5420fa37c8b61bc1769a2
+          name: 'Apple: VPP token name'
+          type: DEPENDENT
+          key: 'int.cert.apple.vpp.name'
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.vpp_name'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.cert.apple.get'
+          tags:
+            - tag: component
+              value: apple
+        - uuid: 88a0132051474bd09bf0e17e87d3b5f2
+          name: 'Apple: ADE token days left'
+          type: DEPENDENT
+          key: 'int.cert.apple.dep.days'
+          delay: '0'
+          units: d
+          description: 'Empty = not configured in this tenant.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.dep_days'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.cert.apple.get'
+          tags:
+            - tag: component
+              value: apple
+          triggers:
+            - uuid: 7e3e820b482345ddbc9bc3c4803c207c
+              expression: 'last(/INT MON-CERT Intune Apple/int.cert.apple.dep.days)<{$INT.CERT.APPLE.DAYS.HIGH}'
+              name: 'INT: Intune ADE token expires in {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'Automated Device Enrollment (DEP) token (earliest of all tokens).'
+              tags:
+                - tag: scope
+                  value: availability
+            - uuid: 381698e453484175b25d108c4cb0053c
+              expression: 'last(/INT MON-CERT Intune Apple/int.cert.apple.dep.days)<{$INT.CERT.APPLE.DAYS.WARN}'
+              name: 'INT: Intune ADE token expires in {ITEM.LASTVALUE1} (< {$INT.CERT.APPLE.DAYS.WARN} d)'
+              priority: AVERAGE
+              description: 'Renew in Intune → Tenant administration → Connectors and tokens (Apple Business / School Manager for VPP and ADE).'
+              dependencies:
+                - name: 'INT: Intune ADE token expires in {ITEM.LASTVALUE1}'
+                  expression: 'last(/INT MON-CERT Intune Apple/int.cert.apple.dep.days)<{$INT.CERT.APPLE.DAYS.HIGH}'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 16c698d01a3c48fd8289a7dc18cb40ec
+          name: 'Apple: ADE token name'
+          type: DEPENDENT
+          key: 'int.cert.apple.dep.name'
+          delay: '0'
+          value_type: CHAR
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.dep_name'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: 'int.cert.apple.get'
+          tags:
+            - tag: component
+              value: apple
+      tags:
+        - tag: service
+          value: MON-CERT
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.CERT.APPLE.DAYS.HIGH}'
+          value: '7'
+        - macro: '{$INT.CERT.APPLE.DAYS.WARN}'
+          value: '30'
+        - macro: '{$INT.CERT.APPLE.NODATA}'
+          value: 36h
+        - macro: '{$MS365.APP.ID}'
+          description: 'Same value as for MON-M365 (set on the tenant host).'
+        - macro: '{$MS365.HTTP.PROXY}'
+        - macro: '{$MS365.PASSWORD}'
+          type: SECRET_TEXT
+          description: 'Same value as for MON-M365 (set on the tenant host).'
+        - macro: '{$MS365.TENANT.ID}'
+          description: 'Same value as for MON-M365 (set on the tenant host).'
