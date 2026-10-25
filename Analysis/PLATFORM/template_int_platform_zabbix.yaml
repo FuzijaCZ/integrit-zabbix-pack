@@ -1,0 +1,359 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: acf7a9e1948842f38ca845f281d9f339
+      name: Templates/Integrit/PLATFORM
+  templates:
+    - uuid: 653857e7331e4dfba1d63218912880b5
+      template: 'INT PLATFORM Zabbix server'
+      name: 'INT PLATFORM Zabbix server'
+      description: |
+        Integrit platform self-monitoring on the Zabbix server host (Integrit/Platform). Links the official 'Zabbix server health'
+        and adds, via the Zabbix API (read-only token): customer site proxies not connected (HIGH, tagged customer/site from the
+        proxy name PXY-<CUST>-<SITE>), failed and stuck notifications, unsupported item count, and an always-on heartbeat
+        problem that drives the external dead-man switch (action + media type 'INT Heartbeat').
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'Zabbix server health'
+      groups:
+        - name: Templates/Integrit/PLATFORM
+      items:
+        - uuid: eb36aefda650404c96f48066a271bd94
+          name: 'Platform: API check raw'
+          type: SCRIPT
+          key: int.zbx.api.get
+          delay: 1m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          params: |
+            var p = JSON.parse(value);
+            var out = {error: '', heartbeat: 1};
+
+            function api(method, params) {
+                var req = new HttpRequest();
+                req.addHeader('Content-Type: application/json-rpc');
+                req.addHeader('Authorization: Bearer ' + p.token);
+                var resp = req.post(p.url, JSON.stringify({jsonrpc: '2.0', method: method, params: params, id: 1}));
+                if (req.getStatus() !== 200) {
+                    throw method + ': HTTP ' + req.getStatus();
+                }
+                var r = JSON.parse(resp);
+                if (r.error) {
+                    throw method + ': ' + r.error.message + ' ' + r.error.data;
+                }
+                return r.result;
+            }
+
+            try {
+                if (!p.token || p.token.indexOf('{$') === 0) {
+                    throw 'Macro {$INT.ZBX.API.TOKEN} is not set.';
+                }
+                var now = Math.floor(Date.now() / 1000);
+                var re = new RegExp(p.proxy_name_regex);
+
+                // Proxies: last seen age, state (0 unknown, 1 offline, 2 online). Customer and site from the name PXY-<CUST>-<SITE>.
+                out.proxies = api('proxy.get', {output: ['name', 'lastaccess', 'state', 'version']}).map(function (x) {
+                    var m = re.exec(x.name) || [];
+                    var last = parseInt(x.lastaccess, 10);
+                    return {
+                        name: x.name,
+                        customer: m[1] || 'INTEGRIT',
+                        site: m[2] || '',
+                        age: last > 0 ? now - last : -1,
+                        state: parseInt(x.state, 10)
+                    };
+                });
+
+                // Notifications that failed (status 2) in the window, and notifications waiting too long (status 0 = not sent yet).
+                var win = parseInt(p.alert_window, 10);
+                var failed = api('alert.get', {output: ['clock', 'error', 'sendto', 'mediatypeid'], filter: {status: 2, alerttype: 0},
+                    time_from: now - win, sortfield: 'clock', sortorder: 'DESC', limit: 100});
+                out.alerts_failed = failed.length;
+                out.alerts_failed_last = failed.length ? (failed[0].sendto + ': ' + failed[0].error).substring(0, 300) : '';
+                out.alerts_stuck = api('alert.get', {countOutput: true, filter: {status: 0, alerttype: 0},
+                    time_from: now - 86400, time_till: now - parseInt(p.stuck_after, 10)});
+                out.alerts_stuck = parseInt(out.alerts_stuck, 10);
+
+                // Unsupported items across all hosts (hygiene, report only).
+                out.items_unsupported = parseInt(api('item.get', {countOutput: true, monitored: true, filter: {state: 1}}), 10);
+            }
+            catch (e) {
+                out.error = String(e).substring(0, 500);
+            }
+            return JSON.stringify(out);
+          timeout: 30s
+          parameters:
+            - name: alert_window
+              value: '{$INT.ZBX.ALERT.WINDOW}'
+            - name: proxy_name_regex
+              value: '{$INT.ZBX.PROXY.NAME.REGEX}'
+            - name: stuck_after
+              value: '{$INT.ZBX.ALERT.STUCK}'
+            - name: token
+              value: '{$INT.ZBX.API.TOKEN}'
+            - name: url
+              value: '{$INT.ZBX.API.URL}'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 1fc25972775847cc8afe30b4014a7785
+          name: 'Platform: API check error'
+          type: DEPENDENT
+          key: int.zbx.api.error
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.error
+          master_item:
+            key: int.zbx.api.get
+          tags:
+            - tag: component
+              value: platform
+          triggers:
+            - uuid: 2d74b0bb39f6456197278a1e820c5761
+              expression: 'length(last(/INT PLATFORM Zabbix server/int.zbx.api.error,#1))>0 and length(last(/INT PLATFORM Zabbix server/int.zbx.api.error,#2))>0'
+              name: 'INT: Platform API self-check fails'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'Proxy and notification checks are blind. Check the API token (expired / user disabled) and {$INT.ZBX.API.URL}.'
+              tags:
+                - tag: scope
+                  value: monitoring
+        - uuid: 6f9e68b3ab27425d89e16cc54cb801dd
+          name: 'Platform: Heartbeat'
+          type: DEPENDENT
+          key: int.zbx.heartbeat
+          delay: '0'
+          description: 'Always 1 while the server collects data. Feeds the always-on heartbeat problem.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.heartbeat
+          master_item:
+            key: int.zbx.api.get
+          tags:
+            - tag: component
+              value: platform
+          triggers:
+            - uuid: 0273d138ee8d4f7eb5844d0279c1a272
+              expression: 'last(/INT PLATFORM Zabbix server/int.zbx.heartbeat)=1'
+              name: 'INT: Platform heartbeat (dead-man switch, always open)'
+              priority: INFO
+              description: 'Intentionally always in PROBLEM. Action "INT Heartbeat" repeats a ping to the external heartbeat service every 5 min through this problem. If Zabbix, the escalator or the alerter dies, the pings stop and the external service alerts Integrit. Never acknowledge-close; exclude tag scope=heartbeat from all other actions.'
+              manual_close: 'NO'
+              tags:
+                - tag: scope
+                  value: heartbeat
+        - uuid: 25ea4c3c810445c9b92bbdb15b0d1982
+          name: 'Platform: Notifications failed'
+          type: DEPENDENT
+          key: int.zbx.alerts.failed
+          delay: '0'
+          description: 'Notifications with status Failed in the last {$INT.ZBX.ALERT.WINDOW} seconds.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.alerts_failed
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.zbx.api.get
+          tags:
+            - tag: component
+              value: alerting
+          triggers:
+            - uuid: d9def969b1b44534acc3e34f396c6dd3
+              expression: 'last(/INT PLATFORM Zabbix server/int.zbx.alerts.failed)>={$INT.ZBX.ALERT.FAILED.MAX}'
+              name: 'INT: Notifications are failing ({ITEM.LASTVALUE1} in the last hour)'
+              priority: HIGH
+              description: 'Customers and NOC may not get alerts (Graph token / secret expired, SMTP, webhook endpoint). Last error in item "Platform: Last failed notification"; Reports → Action log.'
+              tags:
+                - tag: scope
+                  value: monitoring
+        - uuid: 4ece385103ed4f269f29692b1168bd17
+          name: 'Platform: Last failed notification'
+          type: DEPENDENT
+          key: int.zbx.alerts.failed.last
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.alerts_failed_last
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: int.zbx.api.get
+          tags:
+            - tag: component
+              value: alerting
+        - uuid: 484861842ed24d60b6969004f173f6ca
+          name: 'Platform: Notifications stuck'
+          type: DEPENDENT
+          key: int.zbx.alerts.stuck
+          delay: '0'
+          description: 'Notifications still "not sent" after {$INT.ZBX.ALERT.STUCK} seconds.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.alerts_stuck
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.zbx.api.get
+          tags:
+            - tag: component
+              value: alerting
+          triggers:
+            - uuid: 7f418c0b8c8042fca254187181c976c1
+              expression: 'min(/INT PLATFORM Zabbix server/int.zbx.alerts.stuck,5m)>0'
+              name: 'INT: Notifications are stuck in the queue ({ITEM.LASTVALUE1})'
+              priority: HIGH
+              description: 'Alerter cannot deliver (media type timeout, too few alerters). See official trigger "Utilization of alerter processes".'
+              tags:
+                - tag: scope
+                  value: monitoring
+        - uuid: 02ffb77ba271437dbe59adf4274d71bd
+          name: 'Platform: Unsupported items'
+          type: DEPENDENT
+          key: int.zbx.items.unsupported
+          delay: '0'
+          description: 'Monitored items in state Not supported (all customers). Report / hygiene only.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.items_unsupported
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: int.zbx.api.get
+          tags:
+            - tag: component
+              value: platform
+      discovery_rules:
+        - uuid: 53dabee9e05a45db89e9d2871ede99fa
+          name: 'Customer proxies discovery'
+          type: DEPENDENT
+          key: int.zbx.proxy.discovery
+          delay: '0'
+          filter:
+            conditions:
+              - macro: '{#PROXY}'
+                value: '{$INT.ZBX.PROXY.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: A
+          lifetime: 7d
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: f901238f9df24a3c9262f20e60d2aed3
+              name: 'Proxy {#PROXY}: Last seen'
+              type: DEPENDENT
+              key: 'int.zbx.proxy.age[{#PROXY}]'
+              delay: '0'
+              units: s
+              description: '-1 = never seen.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.proxies[?(@.name==''{#PROXY}'')].age.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: int.zbx.api.get
+              tags:
+                - tag: component
+                  value: proxy
+                - tag: proxy
+                  value: '{#PROXY}'
+          trigger_prototypes:
+            - uuid: cbbc97676d7543818bbd9b24771d5536
+              expression: 'last(/INT PLATFORM Zabbix server/int.zbx.proxy.age[{#PROXY}])>{$INT.ZBX.PROXY.LASTSEEN.MAX:"{#PROXY}"}'
+              name: 'INT: Site {#SITE} of {#CUSTOMER} unreachable: proxy {#PROXY} last seen {ITEM.LASTVALUE1} ago'
+              priority: HIGH
+              description: 'Customer site down (power, internet line) or the proxy VM / service stopped. All monitoring of the site is paused; the proxy buffers data and sends it when back. Check MON-NET external checks of the site.'
+              tags:
+                - tag: customer
+                  value: '{#CUSTOMER}'
+                - tag: scope
+                  value: availability
+                - tag: site
+                  value: '{#SITE}'
+            - uuid: 17fc1127b9a24ac4bc2f47672b130bdf
+              expression: 'last(/INT PLATFORM Zabbix server/int.zbx.proxy.age[{#PROXY}])=-1'
+              name: 'INT: Proxy {#PROXY} has never connected'
+              priority: WARNING
+              description: 'New proxy not yet deployed, wrong name / PSK on the proxy, or firewall blocks TCP 10051 outbound.'
+              tags:
+                - tag: customer
+                  value: '{#CUSTOMER}'
+                - tag: scope
+                  value: availability
+          master_item:
+            key: int.zbx.api.get
+          lld_macro_paths:
+            - lld_macro: '{#CUSTOMER}'
+              path: $.customer
+            - lld_macro: '{#PROXY}'
+              path: $.name
+            - lld_macro: '{#SITE}'
+              path: $.site
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.proxies
+      tags:
+        - tag: service
+          value: PLATFORM
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.ZBX.ALERT.FAILED.MAX}'
+          value: '1'
+        - macro: '{$INT.ZBX.ALERT.STUCK}'
+          value: '600'
+          description: 'Seconds a notification may wait in status "not sent".'
+        - macro: '{$INT.ZBX.ALERT.WINDOW}'
+          value: '3600'
+          description: 'Seconds looked back for failed notifications.'
+        - macro: '{$INT.ZBX.API.TOKEN}'
+          type: SECRET_TEXT
+          description: 'API token of the read-only user "zbx-selfcheck" (INSTALL step 2).'
+        - macro: '{$INT.ZBX.API.URL}'
+          value: 'http://localhost/api_jsonrpc.php'
+          description: 'Frontend API URL as seen from the Zabbix server.'
+        - macro: '{$INT.ZBX.PROXY.LASTSEEN.MAX}'
+          value: '300'
+          description: 'Seconds. Per proxy with context, e.g. {$INT.ZBX.PROXY.LASTSEEN.MAX:"PXY-ACME-PRG"}=900 for a flaky line.'
+        - macro: '{$INT.ZBX.PROXY.NAME.REGEX}'
+          value: '^PXY-([A-Za-z0-9]+)-([A-Za-z0-9]+)'
+          description: 'Proxy naming PXY-<CUST>-<SITE> (draft 3.1.3); group 1 = customer tag, group 2 = site tag.'
+        - macro: '{$INT.ZBX.PROXY.NOT_MATCHES}'
+          value: CHANGE_IF_NEEDED
+          description: 'Regex of proxies to ignore (lab, decommissioning).'
+        - macro: '{$ZABBIX.PROXY.LAST_SEEN.MAX}'
+          value: '999999999'
+          description: 'Official WARNING "proxy last seen" off: replaced by the INT HIGH trigger with customer/site tags.'
+    - uuid: 1beeecccc4164845aa4e469b3ff5e78b
+      template: 'INT PLATFORM Zabbix proxy'
+      name: 'INT PLATFORM Zabbix proxy'
+      description: |
+        Integrit platform self-monitoring on every proxy host (monitored by that proxy itself). Links the official
+        'Zabbix proxy health' (caches, queue, buffer, wrong template). OS of the proxy: link 'INT MON-SRV Linux' too.
+        Proxy connection loss is alerted on the server host by 'INT PLATFORM Zabbix server'.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'Zabbix proxy health'
+      groups:
+        - name: Templates/Integrit/PLATFORM
+      tags:
+        - tag: service
+          value: PLATFORM
+        - tag: version
+          value: '1.0'

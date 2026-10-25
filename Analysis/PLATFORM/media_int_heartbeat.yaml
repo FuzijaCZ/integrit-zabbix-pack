@@ -1,0 +1,37 @@
+zabbix_export:
+  version: '7.0'
+  media_types:
+    - name: 'INT Heartbeat'
+      type: WEBHOOK
+      parameters:
+        - name: event_value
+          value: '{EVENT.VALUE}'
+        - name: url
+          value: '{ALERT.SENDTO}'
+      script: |
+        var p = JSON.parse(value);
+        // Only problem-state escalation steps ping; the heartbeat problem never resolves in normal operation.
+        if (p.event_value !== '1') {
+            return 'OK';
+        }
+        if (!/^https:\/\//.test(p.url)) {
+            throw 'Send to must be the https ping URL of the heartbeat service.';
+        }
+        var req = new HttpRequest();
+        req.addHeader('User-Agent: Integrit-Zabbix-Heartbeat');
+        req.get(p.url);
+        if (req.getStatus() < 200 || req.getStatus() >= 300) {
+            throw 'Heartbeat ping failed: HTTP ' + req.getStatus();
+        }
+        return 'OK';
+      timeout: 10s
+      description: |
+        Integrit dead-man switch. Pings an external heartbeat service (e.g. healthchecks.io, Better Stack, Cronitor or an Azure
+        Function) with HTTP GET. Used only by action "INT Heartbeat" on the always-open problem
+        "INT: Platform heartbeat (dead-man switch, always open)" (template INT PLATFORM Zabbix server).
+        User media "Send to" = the ping URL. Set the external check to expect a ping every 5 min with 10 min grace.
+      message_templates:
+        - event_source: TRIGGERS
+          operation_mode: PROBLEM
+          subject: 'Heartbeat'
+          message: 'Heartbeat {EVENT.ID}'
