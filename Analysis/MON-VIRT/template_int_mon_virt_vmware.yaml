@@ -1,0 +1,442 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: d1e1c0692573455eace90bfa423f16b7
+      name: Templates/Integrit/MON-VIRT
+  templates:
+    - uuid: 849b13634ac441c4801f6cab7c0c6b8b
+      template: 'INT MON-VIRT VMware vSphere'
+      name: 'INT MON-VIRT VMware vSphere'
+      description: |
+        Integrit MON-VIRT template for VMware vSphere (vCenter or standalone ESXi), native VMware collector on the site proxy.
+        Items-only design (draft 4.2): hypervisors, clusters, datastores and VMs are discovered as ITEMS on one host per vCenter,
+        not as separate Zabbix hosts. The official 'VMware' template is intentionally not linked: it creates hypervisor and VM hosts
+        in the shared groups "Applications" / "<datacenter>" without customer tags, which breaks the multi-tenant model.
+        Same collector keys as the official templates. One customer = one vCenter host.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      groups:
+        - name: Templates/Integrit/MON-VIRT
+      items:
+        - uuid: 00b3dacef8c044b4a0f8adb62bfb6a52
+          name: 'vCenter: Version'
+          type: SIMPLE
+          key: 'vmware.version[{$VMWARE.URL}]'
+          delay: 1h
+          value_type: CHAR
+          trends: '0'
+          username: '{$VMWARE.USERNAME}'
+          password: '{$VMWARE.PASSWORD}'
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: component
+              value: vcenter
+          triggers:
+            - uuid: 51c9808be2a049e19ccb03086529adff
+              expression: 'nodata(/INT MON-VIRT VMware vSphere/vmware.version[{$VMWARE.URL}],{$INT.VMWARE.NODATA})=1'
+              name: 'INT: vCenter / ESXi API not reachable for {$INT.VMWARE.NODATA}'
+              priority: AVERAGE
+              description: 'VMware collector gets no data: vCenter down, account locked/expired, or proxy cannot reach the SDK URL. All VMware triggers are blind meanwhile.'
+              tags:
+                - tag: scope
+                  value: availability
+      discovery_rules:
+        - uuid: 4b6bd533e932443cbe77e85ccc9fe64a
+          name: 'Clusters discovery'
+          type: SIMPLE
+          key: 'vmware.cluster.discovery[{$VMWARE.URL}]'
+          delay: 1h
+          username: '{$VMWARE.USERNAME}'
+          password: '{$VMWARE.PASSWORD}'
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: cfbc8c199a3c4a2caab3129c19e83236
+              name: 'Cluster {#CLUSTER.NAME}: Status'
+              type: SIMPLE
+              key: 'vmware.cluster.status[{$VMWARE.URL},{#CLUSTER.NAME}]'
+              username: '{$VMWARE.USERNAME}'
+              password: '{$VMWARE.PASSWORD}'
+              valuemap:
+                name: 'INT VMware status'
+              tags:
+                - tag: component
+                  value: cluster
+                - tag: cluster
+                  value: '{#CLUSTER.NAME}'
+              trigger_prototypes:
+                - uuid: 26cc6905b0cd4b06b76968fc68eba958
+                  expression: 'min(/INT MON-VIRT VMware vSphere/vmware.cluster.status[{$VMWARE.URL},{#CLUSTER.NAME}],#3)=3'
+                  name: 'INT: Cluster {#CLUSTER.NAME} status is red'
+                  priority: HIGH
+                  description: 'vSphere reports the cluster as red (HA failover capacity lost, host failure, or a red cluster alarm). See vCenter → cluster → Monitor → Issues.'
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: 9692a0b6839b4018a873a0b0a2b34e69
+                  expression: 'min(/INT MON-VIRT VMware vSphere/vmware.cluster.status[{$VMWARE.URL},{#CLUSTER.NAME}],#3)=2'
+                  name: 'INT: Cluster {#CLUSTER.NAME} status is yellow'
+                  priority: WARNING
+                  tags:
+                    - tag: scope
+                      value: availability
+        - uuid: 2dc12d60c2ec4f13a99af0dc53d90444
+          name: 'Datastores discovery'
+          type: SIMPLE
+          key: 'vmware.datastore.discovery[{$VMWARE.URL}]'
+          delay: 1h
+          username: '{$VMWARE.USERNAME}'
+          password: '{$VMWARE.PASSWORD}'
+          filter:
+            conditions:
+              - macro: '{#DATASTORE}'
+                value: '{$INT.VMWARE.DATASTORE.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: A
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: 66e2b067edea4004afbce6a697d9b07a
+              name: 'Datastore {#DATASTORE}: Free space, in %'
+              type: SIMPLE
+              key: 'vmware.datastore.size[{$VMWARE.URL},{#DATASTORE.UUID},pfree]'
+              delay: 5m
+              value_type: FLOAT
+              units: '%'
+              username: '{$VMWARE.USERNAME}'
+              password: '{$VMWARE.PASSWORD}'
+              tags:
+                - tag: component
+                  value: datastore
+                - tag: datastore
+                  value: '{#DATASTORE}'
+              trigger_prototypes:
+                - uuid: cb712991f2ec443c970cbc721ba0bedb
+                  expression: 'max(/INT MON-VIRT VMware vSphere/vmware.datastore.size[{$VMWARE.URL},{#DATASTORE.UUID},pfree],15m)<{$INT.VMWARE.DATASTORE.PFREE.CRIT:"{#DATASTORE}"}'
+                  name: 'INT: Datastore {#DATASTORE} free space below {$INT.VMWARE.DATASTORE.PFREE.CRIT:"{#DATASTORE}"}%'
+                  opdata: 'Free: {{ITEM.LASTVALUE1}.fmtnum(1)}%'
+                  priority: HIGH
+                  description: 'Thin disks and snapshots will stop VMs when the datastore fills up.'
+                  tags:
+                    - tag: scope
+                      value: capacity
+                - uuid: 8ed23393c40b41d0ae0ffd11b04e86af
+                  expression: 'max(/INT MON-VIRT VMware vSphere/vmware.datastore.size[{$VMWARE.URL},{#DATASTORE.UUID},pfree],15m)<{$INT.VMWARE.DATASTORE.PFREE.WARN:"{#DATASTORE}"}'
+                  name: 'INT: Datastore {#DATASTORE} free space below {$INT.VMWARE.DATASTORE.PFREE.WARN:"{#DATASTORE}"}%'
+                  opdata: 'Free: {{ITEM.LASTVALUE1}.fmtnum(1)}%'
+                  priority: AVERAGE
+                  dependencies:
+                    - name: 'INT: Datastore {#DATASTORE} free space below {$INT.VMWARE.DATASTORE.PFREE.CRIT:"{#DATASTORE}"}%'
+                      expression: 'max(/INT MON-VIRT VMware vSphere/vmware.datastore.size[{$VMWARE.URL},{#DATASTORE.UUID},pfree],15m)<{$INT.VMWARE.DATASTORE.PFREE.CRIT:"{#DATASTORE}"}'
+                  tags:
+                    - tag: scope
+                      value: capacity
+            - uuid: 2e3d28438998425f89e251597c808b37
+              name: 'Datastore {#DATASTORE}: Read latency'
+              type: SIMPLE
+              key: 'vmware.datastore.read[{$VMWARE.URL},{#DATASTORE.UUID},latency]'
+              delay: 5m
+              value_type: FLOAT
+              units: ms
+              username: '{$VMWARE.USERNAME}'
+              password: '{$VMWARE.PASSWORD}'
+              tags:
+                - tag: component
+                  value: datastore
+                - tag: datastore
+                  value: '{#DATASTORE}'
+            - uuid: 80038f55f99d495ba74734958e17d523
+              name: 'Datastore {#DATASTORE}: Write latency'
+              type: SIMPLE
+              key: 'vmware.datastore.write[{$VMWARE.URL},{#DATASTORE.UUID},latency]'
+              delay: 5m
+              value_type: FLOAT
+              units: ms
+              username: '{$VMWARE.USERNAME}'
+              password: '{$VMWARE.PASSWORD}'
+              tags:
+                - tag: component
+                  value: datastore
+                - tag: datastore
+                  value: '{#DATASTORE}'
+          trigger_prototypes:
+            - uuid: 1a70d89949e64f83b832a053d64c415b
+              expression: 'min(/INT MON-VIRT VMware vSphere/vmware.datastore.read[{$VMWARE.URL},{#DATASTORE.UUID},latency],15m)>{$INT.VMWARE.DATASTORE.LATENCY.MAX:"{#DATASTORE}"} or min(/INT MON-VIRT VMware vSphere/vmware.datastore.write[{$VMWARE.URL},{#DATASTORE.UUID},latency],15m)>{$INT.VMWARE.DATASTORE.LATENCY.MAX:"{#DATASTORE}"}'
+              name: 'INT: Datastore {#DATASTORE} latency above {$INT.VMWARE.DATASTORE.LATENCY.MAX:"{#DATASTORE}"} ms for 15 min'
+              priority: AVERAGE
+              description: 'Storage is overloaded or degraded; all VMs on it are slow.'
+              tags:
+                - tag: scope
+                  value: performance
+        - uuid: efb66cc3ec8f4f5083466183947fed02
+          name: 'Hypervisors discovery'
+          type: SIMPLE
+          key: 'vmware.hv.discovery[{$VMWARE.URL}]'
+          delay: 1h
+          username: '{$VMWARE.USERNAME}'
+          password: '{$VMWARE.PASSWORD}'
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: ef3fd2a157084a68822d50b1ddfaed9c
+              name: 'Host {#HV.NAME}: Ballooned memory'
+              type: SIMPLE
+              key: 'vmware.hv.memory.size.ballooned[{$VMWARE.URL},{#HV.UUID}]'
+              delay: 5m
+              units: B
+              username: '{$VMWARE.USERNAME}'
+              password: '{$VMWARE.PASSWORD}'
+              tags:
+                - tag: component
+                  value: hypervisor
+                - tag: hypervisor
+                  value: '{#HV.NAME}'
+              trigger_prototypes:
+                - uuid: 486a67585f3c4f4092addfafbeb0dd7c
+                  expression: 'min(/INT MON-VIRT VMware vSphere/vmware.hv.memory.size.ballooned[{$VMWARE.URL},{#HV.UUID}],{$INT.VMWARE.BALLOON.PERIOD})>0'
+                  name: 'INT: Host {#HV.NAME} is ballooning memory for {$INT.VMWARE.BALLOON.PERIOD}'
+                  opdata: 'Ballooned: {ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  description: 'Sustained memory overcommit: VMs lose memory to the balloon driver and slow down. Add RAM or rebalance VMs.'
+                  tags:
+                    - tag: scope
+                      value: capacity
+            - uuid: fcc650ecc9ce499fb0c912519ef41f76
+              name: 'Host {#HV.NAME}: Connection state'
+              type: SIMPLE
+              key: 'vmware.hv.connectionstate[{$VMWARE.URL},{#HV.UUID}]'
+              username: '{$VMWARE.USERNAME}'
+              password: '{$VMWARE.PASSWORD}'
+              valuemap:
+                name: 'INT VMware connection state'
+              tags:
+                - tag: component
+                  value: hypervisor
+                - tag: hypervisor
+                  value: '{#HV.NAME}'
+              trigger_prototypes:
+                - uuid: 2e136bee3d7443d19b927d9cc318ed7e
+                  expression: 'min(/INT MON-VIRT VMware vSphere/vmware.hv.connectionstate[{$VMWARE.URL},{#HV.UUID}],#3)>0'
+                  name: 'INT: Host {#HV.NAME} is disconnected / not responding'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'vCenter lost the ESXi host. If HA works, its VMs restart elsewhere; otherwise they are down.'
+                  tags:
+                    - tag: scope
+                      value: availability
+            - uuid: 04e1188116834d02a69007a2a1e3c037
+              name: 'Host {#HV.NAME}: Maintenance mode'
+              type: SIMPLE
+              key: 'vmware.hv.maintenance[{$VMWARE.URL},{#HV.UUID}]'
+              delay: 5m
+              username: '{$VMWARE.USERNAME}'
+              password: '{$VMWARE.PASSWORD}'
+              valuemap:
+                name: 'INT VMware maintenance'
+              tags:
+                - tag: component
+                  value: hypervisor
+                - tag: hypervisor
+                  value: '{#HV.NAME}'
+              trigger_prototypes:
+                - uuid: da1e1873f9cc49659815b9c43b1e8b96
+                  expression: 'min(/INT MON-VIRT VMware vSphere/vmware.hv.maintenance[{$VMWARE.URL},{#HV.UUID}],{$INT.VMWARE.MAINT.MAX})=1'
+                  name: 'INT: Host {#HV.NAME} in maintenance mode for {$INT.VMWARE.MAINT.MAX}'
+                  priority: WARNING
+                  description: 'Cluster runs with reduced capacity / redundancy. Forgotten maintenance mode after patching is common.'
+                  tags:
+                    - tag: scope
+                      value: capacity
+            - uuid: 85c211b32b5e45b285bdf2e19f2dddcb
+              name: 'Host {#HV.NAME}: Overall status'
+              type: SIMPLE
+              key: 'vmware.hv.status[{$VMWARE.URL},{#HV.UUID}]'
+              username: '{$VMWARE.USERNAME}'
+              password: '{$VMWARE.PASSWORD}'
+              valuemap:
+                name: 'INT VMware status'
+              tags:
+                - tag: component
+                  value: hypervisor
+                - tag: hypervisor
+                  value: '{#HV.NAME}'
+              trigger_prototypes:
+                - uuid: fba8a40fdc5a4b7799b38a705e7ad00e
+                  expression: 'min(/INT MON-VIRT VMware vSphere/vmware.hv.status[{$VMWARE.URL},{#HV.UUID}],#3)=3'
+                  name: 'INT: Host {#HV.NAME} status is red (hardware or host alarm)'
+                  priority: HIGH
+                  description: 'Red overall status: failed hardware sensor (PSU, fan, memory, RAID), lost storage path or red host alarm. See vCenter → host → Monitor → Hardware Health / Issues.'
+                  dependencies:
+                    - name: 'INT: Host {#HV.NAME} is disconnected / not responding'
+                      expression: 'min(/INT MON-VIRT VMware vSphere/vmware.hv.connectionstate[{$VMWARE.URL},{#HV.UUID}],#3)>0'
+                  tags:
+                    - tag: scope
+                      value: availability
+        - uuid: bf976a0f515b4190989dd6074136da04
+          name: 'VMs discovery'
+          type: SIMPLE
+          key: 'vmware.vm.discovery[{$VMWARE.URL}]'
+          delay: 1h
+          username: '{$VMWARE.USERNAME}'
+          password: '{$VMWARE.PASSWORD}'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#VM.NAME}'
+                value: '{$INT.VMWARE.VM.MATCHES}'
+                formulaid: A
+              - macro: '{#VM.NAME}'
+                value: '{$INT.VMWARE.VM.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: B
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'VMs as items (power state, snapshot age). Templates (vCLS, replicas) are excluded by {$INT.VMWARE.VM.NOT_MATCHES}.'
+          item_prototypes:
+            - uuid: e7d5c479b7f34795ada0f3ce115f8f6c
+              name: 'VM {#VM.NAME}: Oldest snapshot age'
+              type: DEPENDENT
+              key: 'int.vmware.vm.snapshot.age[{#VM.UUID}]'
+              delay: '0'
+              units: s
+              description: '0 = no snapshot.'
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var d = JSON.parse(value);
+                      if (!d.count) {
+                          return 0;
+                      }
+                      var t = d.oldestdate || d.latestdate;
+                      return Math.max(0, Math.floor(Date.now() / 1000) - t);
+              master_item:
+                key: 'vmware.vm.snapshot.get[{$VMWARE.URL},{#VM.UUID}]'
+              tags:
+                - tag: component
+                  value: vm
+                - tag: vm
+                  value: '{#VM.NAME}'
+              trigger_prototypes:
+                - uuid: 5934600b83914fd480fc88b4bb0f2d8f
+                  expression: 'last(/INT MON-VIRT VMware vSphere/int.vmware.vm.snapshot.age[{#VM.UUID}])>{$INT.VMWARE.SNAPSHOT.MAX.AGE:"{#VM.NAME}"}'
+                  name: 'INT: VM {#VM.NAME} has a snapshot older than {$INT.VMWARE.SNAPSHOT.MAX.AGE:"{#VM.NAME}"}'
+                  opdata: 'Oldest: {ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  description: 'Old snapshots grow without limit, slow the VM down and can fill the datastore. Often left behind by a failed backup.'
+                  tags:
+                    - tag: scope
+                      value: capacity
+            - uuid: 2fc2db01d8da465bb84cc3ec25394acf
+              name: 'VM {#VM.NAME}: Get snapshots'
+              type: SIMPLE
+              key: 'vmware.vm.snapshot.get[{$VMWARE.URL},{#VM.UUID}]'
+              delay: 1h
+              history: '0'
+              value_type: TEXT
+              trends: '0'
+              username: '{$VMWARE.USERNAME}'
+              password: '{$VMWARE.PASSWORD}'
+              tags:
+                - tag: component
+                  value: raw
+            - uuid: a64a76b8599f4c4fab3f4db571df0278
+              name: 'VM {#VM.NAME}: Power state'
+              type: SIMPLE
+              key: 'vmware.vm.powerstate[{$VMWARE.URL},{#VM.UUID}]'
+              username: '{$VMWARE.USERNAME}'
+              password: '{$VMWARE.PASSWORD}'
+              valuemap:
+                name: 'INT VMware power state'
+              tags:
+                - tag: component
+                  value: vm
+                - tag: vm
+                  value: '{#VM.NAME}'
+              trigger_prototypes:
+                - uuid: 3aee44cd50674bc996cba71a45235e62
+                  expression: 'min(/INT MON-VIRT VMware vSphere/vmware.vm.powerstate[{$VMWARE.URL},{#VM.UUID}],#3)<>1 and {$INT.VMWARE.VM.CRITICAL:"{#VM.NAME}"}=1'
+                  name: 'INT: VM {#VM.NAME} is not powered on'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'A VM from the in-scope list ({$INT.VMWARE.VM.CRITICAL:"<vm>"}=1) is off or suspended.'
+                  tags:
+                    - tag: scope
+                      value: availability
+      tags:
+        - tag: service
+          value: MON-VIRT
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.VMWARE.BALLOON.PERIOD}'
+          value: 1h
+        - macro: '{$INT.VMWARE.DATASTORE.LATENCY.MAX}'
+          value: '30'
+          description: 'ms, context per datastore.'
+        - macro: '{$INT.VMWARE.DATASTORE.NOT_MATCHES}'
+          value: '^$'
+          description: 'Datastores not to monitor (e.g. ISO libraries, local scratch).'
+        - macro: '{$INT.VMWARE.DATASTORE.PFREE.CRIT}'
+          value: '5'
+        - macro: '{$INT.VMWARE.DATASTORE.PFREE.WARN}'
+          value: '15'
+        - macro: '{$INT.VMWARE.MAINT.MAX}'
+          value: 4h
+          description: 'Maintenance mode longer than this raises WARNING (unexpected / forgotten).'
+        - macro: '{$INT.VMWARE.NODATA}'
+          value: 30m
+        - macro: '{$INT.VMWARE.SNAPSHOT.MAX.AGE}'
+          value: 7d
+        - macro: '{$INT.VMWARE.VM.CRITICAL}'
+          value: '0'
+          description: 'Set {$INT.VMWARE.VM.CRITICAL:"<vm name>"}=1 for every VM whose power-off must alert (HIGH).'
+        - macro: '{$INT.VMWARE.VM.MATCHES}'
+          value: '.+'
+        - macro: '{$INT.VMWARE.VM.NOT_MATCHES}'
+          value: '^(vCLS-.*|.*-replica|.*_replica)$'
+        - macro: '{$VMWARE.PASSWORD}'
+          type: SECRET_TEXT
+        - macro: '{$VMWARE.URL}'
+          description: 'https://<vcenter or esxi>/sdk'
+        - macro: '{$VMWARE.USERNAME}'
+          description: 'Read-only vCenter user, e.g. svc-zabbix@vsphere.local'
+      valuemaps:
+        - uuid: 470e6c957ef2430680cb265fcf78fd32
+          name: 'INT VMware connection state'
+          mappings:
+            - value: '0'
+              newvalue: Connected
+            - value: '1'
+              newvalue: Disconnected
+            - value: '2'
+              newvalue: 'Not responding'
+            - value: '3'
+              newvalue: Unknown
+        - uuid: 1e430a3d45b540348047b0fec7f6e045
+          name: 'INT VMware maintenance'
+          mappings:
+            - value: '0'
+              newvalue: 'Not in maintenance'
+            - value: '1'
+              newvalue: 'In maintenance'
+        - uuid: 31ee68b2da9947dca5e2df26e8805cf6
+          name: 'INT VMware power state'
+          mappings:
+            - value: '0'
+              newvalue: 'Powered off'
+            - value: '1'
+              newvalue: 'Powered on'
+            - value: '2'
+              newvalue: Suspended
+        - uuid: 0b5d48ab61e94a4aa593cc73abaea4f7
+          name: 'INT VMware status'
+          mappings:
+            - value: '0'
+              newvalue: Gray
+            - value: '1'
+              newvalue: Green
+            - value: '2'
+              newvalue: Yellow
+            - value: '3'
+              newvalue: Red

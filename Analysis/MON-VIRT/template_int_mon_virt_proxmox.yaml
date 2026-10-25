@@ -1,0 +1,165 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: d1e1c0692573455eace90bfa423f16b7
+      name: Templates/Integrit/MON-VIRT
+  templates:
+    - uuid: 5bdd5498b0db4a04a444c0c14c6a3e0e
+      template: 'INT MON-VIRT Proxmox VE'
+      name: 'INT MON-VIRT Proxmox VE'
+      description: |
+        Integrit MON-VIRT wrapper for Proxmox VE 7/8 (API token, site proxy). Links the official 'Proxmox VE by HTTP'
+        (nodes, quorum, API availability; everything stays on one host = multi-tenant safe).
+        Adds: critical VMs / containers not running HIGH ({$INT.PVE.GUEST.CRIT.MATCHES}), storage 85 % AVERAGE / 95 % HIGH.
+        The official storage WARNING is switched off by macro. Disable the official "QEMU discovery" and "LXC discovery"
+        on the host when the customer keeps intentionally stopped VMs (official AVERAGE for every stopped guest). See INSTALL.md.
+      vendor:
+        name: 'integrit s.r.o.'
+        version: 7.0-1
+      templates:
+        - name: 'Proxmox VE by HTTP'
+      groups:
+        - name: Templates/Integrit/MON-VIRT
+      discovery_rules:
+        - uuid: 450ee0deaaa9485e93d4362dec7e1059
+          name: 'INT: Critical guests discovery'
+          type: DEPENDENT
+          key: int.pve.guest.discovery
+          delay: '0'
+          filter:
+            conditions:
+              - macro: '{#GUEST.NAME}'
+                value: '{$INT.PVE.GUEST.CRIT.MATCHES}'
+                formulaid: A
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'QEMU VMs and LXC containers (not templates) whose name matches {$INT.PVE.GUEST.CRIT.MATCHES}.'
+          item_prototypes:
+            - uuid: 53dc0a4ddd2a43b08e85a31949d74c2f
+              name: 'INT: Guest [{#NODE.NAME}/{#GUEST.NAME} ({#GUEST.ID})]: Status'
+              type: DEPENDENT
+              key: 'int.pve.guest.status["{#GUEST.ID}"]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.data[?(@.id == "{#GUEST.ID}")].status.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: missing
+              master_item:
+                key: proxmox.cluster.resources
+              tags:
+                - tag: component
+                  value: vm
+                - tag: vm
+                  value: '{#GUEST.NAME}'
+              trigger_prototypes:
+                - uuid: 3394801726c3406b8044b4e6840374e4
+                  expression: 'count(/INT MON-VIRT Proxmox VE/int.pve.guest.status["{#GUEST.ID}"],#3,"ne","running")=3'
+                  name: 'INT: Critical guest {#GUEST.NAME} ({#GUEST.ID}) is not running'
+                  opdata: '{ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'VM/container from the in-scope list is stopped, paused or missing for 3 checks (15 min).'
+                  tags:
+                    - tag: scope
+                      value: availability
+          master_item:
+            key: proxmox.cluster.resources
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  return JSON.stringify(JSON.parse(value).data.filter(function (r) {
+                      return (r.type === 'qemu' || r.type === 'lxc') && r.template !== 1;
+                  }).map(function (r) {
+                      return {'{#GUEST.ID}': r.id, '{#GUEST.NAME}': r.name || r.id, '{#NODE.NAME}': r.node};
+                  }));
+        - uuid: f5641b7e8bab46b08584b013389ef5bb
+          name: 'INT: Storage discovery'
+          type: DEPENDENT
+          key: int.pve.storage.discovery
+          delay: '0'
+          filter:
+            conditions:
+              - macro: '{#STORAGE.NAME}'
+                value: '{$INT.PVE.STORAGE.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: A
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Active storages per node. Shared storages appear once per node.'
+          item_prototypes:
+            - uuid: e37df52b9b6d4a32871591c35e10f853
+              name: 'INT: Storage [{#NODE.NAME}/{#STORAGE.NAME}]: Space used, in %'
+              type: DEPENDENT
+              key: 'int.pve.storage.pused["{#ID}"]'
+              delay: '0'
+              value_type: FLOAT
+              units: '%'
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var r = JSON.parse(value).data.filter(function (x) { return x.id === '{#ID}'; })[0];
+                      if (!r || !(r.maxdisk > 0)) {
+                          throw 'Storage {#ID} not active or without size.';
+                      }
+                      return r.disk / r.maxdisk * 100;
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: proxmox.cluster.resources
+              tags:
+                - tag: component
+                  value: storage
+                - tag: storage
+                  value: '{#STORAGE.NAME}'
+              trigger_prototypes:
+                - uuid: a5ddf128f2ca4675a54475d6ea83c0cd
+                  expression: 'min(/INT MON-VIRT Proxmox VE/int.pve.storage.pused["{#ID}"],15m)>{$INT.PVE.STORAGE.PUSED.CRIT:"{#STORAGE.NAME}"}'
+                  name: 'INT: Storage {#NODE.NAME}/{#STORAGE.NAME} is more than {$INT.PVE.STORAGE.PUSED.CRIT:"{#STORAGE.NAME}"}% full'
+                  opdata: '{{ITEM.LASTVALUE1}.fmtnum(1)}%'
+                  priority: HIGH
+                  tags:
+                    - tag: scope
+                      value: capacity
+                - uuid: bbc53e80a2a44485886ae37db4579306
+                  expression: 'min(/INT MON-VIRT Proxmox VE/int.pve.storage.pused["{#ID}"],15m)>{$INT.PVE.STORAGE.PUSED.WARN:"{#STORAGE.NAME}"}'
+                  name: 'INT: Storage {#NODE.NAME}/{#STORAGE.NAME} is more than {$INT.PVE.STORAGE.PUSED.WARN:"{#STORAGE.NAME}"}% full'
+                  opdata: '{{ITEM.LASTVALUE1}.fmtnum(1)}%'
+                  priority: AVERAGE
+                  dependencies:
+                    - name: 'INT: Storage {#NODE.NAME}/{#STORAGE.NAME} is more than {$INT.PVE.STORAGE.PUSED.CRIT:"{#STORAGE.NAME}"}% full'
+                      expression: 'min(/INT MON-VIRT Proxmox VE/int.pve.storage.pused["{#ID}"],15m)>{$INT.PVE.STORAGE.PUSED.CRIT:"{#STORAGE.NAME}"}'
+                  tags:
+                    - tag: scope
+                      value: capacity
+          master_item:
+            key: proxmox.cluster.resources
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  return JSON.stringify(JSON.parse(value).data.filter(function (r) {
+                      return r.type === 'storage' && r.status === 'available';
+                  }).map(function (r) {
+                      return {'{#ID}': r.id, '{#STORAGE.NAME}': r.storage, '{#NODE.NAME}': r.node};
+                  }));
+      tags:
+        - tag: service
+          value: MON-VIRT
+        - tag: version
+          value: '1.0'
+      macros:
+        - macro: '{$INT.PVE.GUEST.CRIT.MATCHES}'
+          value: '^$'
+          description: 'Regex of VM / container names whose stop must alert HIGH, e.g. ^(dc01|erp|fileserver)$. Default none.'
+        - macro: '{$INT.PVE.STORAGE.NOT_MATCHES}'
+          value: '^$'
+          description: 'Storages not to monitor (e.g. ISO-only NFS).'
+        - macro: '{$INT.PVE.STORAGE.PUSED.CRIT}'
+          value: '95'
+        - macro: '{$INT.PVE.STORAGE.PUSED.WARN}'
+          value: '85'
+        - macro: '{$PVE.STORAGE.PUSE.MAX.WARN}'
+          value: '101'
+          description: 'Switches off the official storage WARNING (replaced by INT 85/95 %).'
